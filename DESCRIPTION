@@ -1,0 +1,33 @@
+Package: hscida
+Title: HSCI data access provider
+Version: 0.1.0
+Authors@R: c(
+    person(given = "Eetu",
+           family = "Mäkelä",
+           role = c("aut", "cre"),
+           email = "eetu.makela@helsinki.fi",
+           comment = c(ORCID = "0000-0002-8366-8414"))
+           )
+Description: HSCI data access provider
+License: file LICENSE
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.1
+Imports:
+    bit64,
+    DBI,
+    dbplyr,
+    dplyr,
+    duckdb,
+    dotenv,
+    glue,
+    here,
+    purrr,
+    stringr
+Suggests: 
+    readr,
+    testthat (>= 3.0.0),
+    tibble
+Config/testthat/edition: 3
+Depends: 
+    R (>= 4.1.0)

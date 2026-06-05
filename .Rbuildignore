@@ -1,0 +1,16 @@
+^\.git$
+^\.github$
+^\.venv$
+^\.pytest_cache$
+^\.history$
+^dist$
+^src$
+^uv\.lock$
+^pyproject\.toml$
+^hscida\.py$
+^tests/test_hscida\.py$
+^.*__pycache__/.*$
+^.*\.pyc$
+^rproject\.toml$
+^rv$
+^rv\.lock$

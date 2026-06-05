@@ -1,0 +1,24 @@
+[project]
+name = "hscida"
+r_version = "4.6"
+
+repositories = [
+    {alias = "hsci", url = "https://hsci-r.r-universe.dev/"},
+    {alias = "cloud", url = "https://cloud.r-project.org/"},
+]
+
+dependencies = [
+    "bit64",
+    "DBI",
+    "dbplyr",
+    "dplyr",
+    "duckdb",
+    "dotenv",
+    "glue",
+    "here",
+    "purrr",
+    "readr",
+    "stringr",
+    "testthat",
+    "tibble",
+]
