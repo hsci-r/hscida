@@ -52,6 +52,27 @@ test_that("config_from_env also reads .env.secret", {
   expect_equal(cfg$projroot, "/tmp/from-secret")
 })
 
+test_that("config_from_env concatenates INIT_SQL and INIT_SQL_1,2,3", {
+  Sys.unsetenv(c(
+    "GLOB_PATTERN", "INIT_SQL", "INIT_SQL_1", "INIT_SQL_2", "INIT_SQL_3", "INIT_SQL_4",
+    "DUCKDB_CONFIG", "PROJROOT"
+  ))
+
+  Sys.setenv(
+    INIT_SQL = "CREATE TEMP TABLE t (x INTEGER);",
+    INIT_SQL_1 = "INSERT INTO t VALUES (1);",
+    INIT_SQL_2 = "INSERT INTO t VALUES (2);",
+    INIT_SQL_3 = "SELECT * FROM t;"
+  )
+
+  cfg <- hscida:::config_from_env()
+
+  expect_equal(
+    cfg$init_sql,
+    "CREATE TEMP TABLE t (x INTEGER);INSERT INTO t VALUES (1);INSERT INTO t VALUES (2);SELECT * FROM t;"
+  )
+})
+
 test_that("data_access can register and query csv", {
   csv_path <- tempfile(fileext = ".csv")
   readr::write_csv(

@@ -3,7 +3,7 @@ from pathlib import Path
 import hscida as hs
 import polars as pl
 
-from hscida import DataAccess, DataAccessConfig, config_from_env, to_pandas, to_polars
+from hscida import DataAccessConfig, config_from_env, data_access, to_pandas, to_polars
 
 
 def test_config_from_env_parses_values(monkeypatch):
@@ -104,6 +104,22 @@ def test_config_from_env_works_without_dotenv_files(tmp_path: Path, monkeypatch)
     assert config.projroot == hs._PROJROOT
 
 
+def test_config_from_env_concatenates_numbered_init_sql(monkeypatch):
+    monkeypatch.setenv("INIT_SQL", "CREATE TEMP TABLE t (x INTEGER);")
+    monkeypatch.setenv("INIT_SQL_1", "INSERT INTO t VALUES (1);")
+    monkeypatch.setenv("INIT_SQL_2", "INSERT INTO t VALUES (2);")
+    monkeypatch.setenv("INIT_SQL_3", "SELECT * FROM t;")
+
+    config = config_from_env()
+
+    assert config.init_sql == (
+        "CREATE TEMP TABLE t (x INTEGER);"
+        "INSERT INTO t VALUES (1);"
+        "INSERT INTO t VALUES (2);"
+        "SELECT * FROM t;"
+    )
+
+
 def test_data_access_loads_csv_and_converts(tmp_path: Path):
     dataset_path = tmp_path / "sample.csv"
     pl.DataFrame({"x": [1, 2], "y": ["a", "b"]}).write_csv(dataset_path)
@@ -113,11 +129,12 @@ def test_data_access_loads_csv_and_converts(tmp_path: Path):
         init_sql="SELECT 1",
         projroot=str(tmp_path),
     )
-    da = DataAccess(cfg)
-
-    lazy = da.f("sample", str(dataset_path))
+    con, f = data_access(cfg)
+    lazy = f("sample", str(dataset_path))
     polars_df = to_polars(lazy)
     pandas_df = to_pandas(lazy)
+
+    con.close()
 
     assert polars_df.shape == (2, 2)
     assert pandas_df.shape == (2, 2)
@@ -133,9 +150,10 @@ def test_data_access_caches_relation(tmp_path: Path):
         init_sql="SELECT 1",
         projroot=str(tmp_path),
     )
-    da = DataAccess(cfg)
+    con, f = data_access(cfg)
+    first = f("cache", str(dataset_path))
+    second = f("cache")
 
-    first = da.f("cache", str(dataset_path))
-    second = da.f("cache")
+    con.close()
 
     assert first is second

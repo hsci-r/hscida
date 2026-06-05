@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Any, cast
+from typing import Any, Callable, cast
 from hereutil import here
 import narwhals as nw
 import duckdb
@@ -24,35 +24,39 @@ def config_from_env() -> DataAccessConfig:
         **dotenv_values(here(".env.secret")),
         **os.environ,
     }
+    init_sql = c.get('INIT_SQL', '')
+    i = 1
+    while f"INIT_SQL_{i}" in c:
+        init_sql += c[f"INIT_SQL_{i}"]
+        i += 1
     return DataAccessConfig(
         glob_pattern=c.get('GLOB_PATTERN', ''),
-        init_sql=c.get('INIT_SQL', ''),
+        init_sql=init_sql,
         duckdb_config={k: v for k, v in [pair.split('=') for pair in c['DUCKDB_CONFIG'].split(',')] } if 'DUCKDB_CONFIG' in c else _DEFAULT_DUCKDB_CONFIG,
         projroot=c.get('PROJROOT', _PROJROOT)
     )
 
-class DataAccess:
-    def __init__(self, config: DataAccessConfig = config_from_env()) -> None:
-        self.con = duckdb.connect(config=config.duckdb_config)
-        self.con.sql(config.init_sql)
-        self.datasets = dict[str, nw.LazyFrame[duckdb.DuckDBPyRelation]]()
-        self.config = config
+def data_access(config: DataAccessConfig = config_from_env()) -> tuple[duckdb.DuckDBPyConnection, Callable[..., nw.LazyFrame[duckdb.DuckDBPyRelation]]]:
+    con = duckdb.connect(config=config.duckdb_config)
+    con.sql(config.init_sql)
+    datasets = dict[str, nw.LazyFrame[duckdb.DuckDBPyRelation]]()
 
-    def register_files_as_view(self, table_name: str, *paths: str, replace: bool = False) -> None:
-        self.con.sql(f"CREATE {('OR REPLACE' if replace else '')} VIEW {'IF NOT EXISTS' if not replace else ''} {table_name} AS FROM read_{'parquet' if paths[0].endswith('.parquet') else 'csv'}(['{"', '".join(paths)}'], hive_partitioning=true);")
+    def register_files_as_view(table_name: str, *paths: str, replace: bool = False) -> None:
+        con.sql(f"CREATE {('OR REPLACE' if replace else '')} VIEW {'IF NOT EXISTS' if not replace else ''} {table_name} AS FROM read_{'parquet' if paths[0].endswith('.parquet') else 'csv'}(['{"', '".join(paths)}'], hive_partitioning=true);")
 
-    def f(self, dataset: str, *paths: str,replace: bool = False, debug: bool = False) -> nw.LazyFrame[duckdb.DuckDBPyRelation]:
-        if dataset not in self.datasets or replace:
+    def f(dataset: str, *paths: str,replace: bool = False, debug: bool = False) -> nw.LazyFrame[duckdb.DuckDBPyRelation]:
+        if dataset not in datasets or replace:
             if not paths:
-                paths = tuple(path[0] for path in self.con.sql("FROM "+self.config.glob_pattern.format(dataset=dataset,projroot=self.config.projroot)).fetchall())
+                paths = tuple(path[0] for path in con.sql("FROM "+config.glob_pattern.format(dataset=dataset,projroot=config.projroot)).fetchall())
             if debug:
                 print(f"DEBUG: Found paths for dataset {dataset}: {paths}")
             if not paths:
-                print(f"No files found for dataset {dataset} in {self.config.glob_pattern.format(dataset=dataset,projroot=self.config.projroot)}")
+                print(f"No files found for dataset {dataset} in {config.glob_pattern.format(dataset=dataset,projroot=config.projroot)}")
                 return cast(nw.LazyFrame[duckdb.DuckDBPyRelation], None)
-            self.register_files_as_view(dataset, *paths, replace=replace)
-            self.datasets[dataset] = nw.from_native(self.con.sql(f'FROM {dataset}'))
-        return self.datasets[dataset]
+            register_files_as_view(dataset, *paths, replace=replace)
+            datasets[dataset] = nw.from_native(con.sql(f'FROM {dataset}'))
+        return datasets[dataset]
+    return con, f
 
 c = nw.col
 l = nw.lit
@@ -75,4 +79,4 @@ p = to_polars
 def to_pandas(lnf: nw.LazyFrame[duckdb.DuckDBPyRelation]):
     return d(lnf).df()
 
-__all__ = [ "DataAccess", "c", "l", "to_narwhals", "n", "to_duckdb", "d", "to_polars", "p","to_pandas" ]
+__all__ = [ "data_access", "c", "l", "to_narwhals", "n", "to_duckdb", "d", "to_polars", "p","to_pandas" ]

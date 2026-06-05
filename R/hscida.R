@@ -15,9 +15,15 @@ config_from_env <- function() {
     stringr::str_split_1(stringr::fixed(",")) |>
     purrr::set_names(\(pair) stringr::str_extract(pair, stringr::regex("^[^=]+"))) |>
     purrr::map(\(pair) stringr::str_extract(pair, stringr::regex("[^=]+$")))
+  i <- 1
+  init_sql <- Sys.getenv("INIT_SQL", "")
+  while(!is.na(Sys.getenv(stringr::str_c("INIT_SQL_", i), unset = NA_character_))) {
+    init_sql <- stringr::str_c(init_sql, Sys.getenv(stringr::str_c("INIT_SQL_", i)))
+    i <- i + 1
+  }
   list(
     glob_pattern = Sys.getenv("GLOB_PATTERN"),
-    init_sql = Sys.getenv("INIT_SQL"),
+    init_sql = init_sql,
     duckdb_config = duckdb_config,
     projroot = Sys.getenv("PROJROOT", here::here())
   )
