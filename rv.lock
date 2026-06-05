@@ -52,10 +52,11 @@ dependencies = []
 
 [[packages]]
 name = "callr"
-version = "3.7.6"
+version = "3.8.0"
 source = { repository = "https://cloud.r-project.org/" }
 force_source = false
 dependencies = [
+    { name = "otel", requirement = "(>= 0.2.0)" },
     { name = "processx", requirement = "(>= 3.6.1)" },
     "R6",
 ]
@@ -236,6 +237,13 @@ dependencies = [
 [[packages]]
 name = "magrittr"
 version = "2.0.5"
+source = { repository = "https://cloud.r-project.org/" }
+force_source = false
+dependencies = []
+
+[[packages]]
+name = "otel"
+version = "0.2.0"
 source = { repository = "https://cloud.r-project.org/" }
 force_source = false
 dependencies = []

@@ -72,7 +72,7 @@ data_access <- function(config = config_from_env()) {
       paths <- list(...)
       if (length(paths) == 0)
         paths <- dplyr::tbl(
-          dbplyr::src_dbi(con),
+          con,
           glue::glue_data(list(dataset = dataset, projroot = config$projroot), config$glob_pattern)
         ) |>
           dplyr::pull(file)
@@ -84,7 +84,7 @@ data_access <- function(config = config_from_env()) {
       }
       register_files_as_view(dataset, paths, replace = replace)
       assign(dataset, dplyr::tbl(
-        dbplyr::src_dbi(con),
+        con,
         dataset
       ), envir = datasets)
     }
