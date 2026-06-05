@@ -15,6 +15,7 @@ Roxygen: list(markdown = TRUE)
 Imports:
     bit64,
     DBI,
+    dbplyr,
     dplyr,
     duckdb,
     dotenv,

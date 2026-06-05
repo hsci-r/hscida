@@ -1,3 +1,6 @@
+ignore_unused_imports <- function() {
+  dbplyr::sql
+}
 
 #' Read data access configuration from environment variables.
 #'
