@@ -9,7 +9,8 @@
 #' @keywords internal
 #' @noRd
 config_from_env <- function() {
-  dotenv::load_dot_env(here::here(".env"))
+  try(dotenv::load_dot_env(here::here(".env")), silent = TRUE)
+  try(dotenv::load_dot_env(here::here(".env.secret")), silent = TRUE)
   duckdb_config <- Sys.getenv("DUCKDB_CONFIG", "parquet_metadata_cache=true,preserve_insertion_order=false,enable_fsst_vectors=true") |>
     stringr::str_split_1(stringr::fixed(",")) |>
     purrr::set_names(\(pair) stringr::str_extract(pair, stringr::regex("^[^=]+"))) |>

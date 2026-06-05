@@ -1,5 +1,57 @@
 library(hscida)
 
+test_that("config_from_env reads values from .env", {
+  Sys.unsetenv(c("GLOB_PATTERN", "INIT_SQL", "DUCKDB_CONFIG", "PROJROOT"))
+
+  tmp_root <- tempfile("dotenv-root-")
+  dir.create(tmp_root)
+
+  testthat::local_mocked_bindings(
+    here = function(...) file.path(tmp_root, ...),
+    .package = "here"
+  )
+
+  writeLines(c(
+    "GLOB_PATTERN=glob('{projroot}/{dataset}/*.csv')",
+    "INIT_SQL=SELECT 42",
+    "DUCKDB_CONFIG=threads=1,enable_fsst_vectors=true",
+    "PROJROOT=/tmp/from-dotenv"
+  ), file.path(tmp_root, ".env"))
+
+  cfg <- hscida:::config_from_env()
+
+  expect_equal(cfg$glob_pattern, "glob('{projroot}/{dataset}/*.csv')")
+  expect_equal(cfg$init_sql, "SELECT 42")
+  expect_equal(cfg$duckdb_config, list(threads = "1", enable_fsst_vectors = "true"))
+  expect_equal(cfg$projroot, "/tmp/from-dotenv")
+})
+
+test_that("config_from_env also reads .env.secret", {
+  Sys.unsetenv(c("GLOB_PATTERN", "INIT_SQL", "DUCKDB_CONFIG", "PROJROOT"))
+
+  tmp_root <- tempfile("dotenv-root-")
+  dir.create(tmp_root)
+
+  testthat::local_mocked_bindings(
+    here = function(...) file.path(tmp_root, ...),
+    .package = "here"
+  )
+
+  writeLines(c(
+    "GLOB_PATTERN=glob('{projroot}/{dataset}/*.parquet')",
+    "INIT_SQL=SELECT 7",
+    "DUCKDB_CONFIG=threads=4",
+    "PROJROOT=/tmp/from-secret"
+  ), file.path(tmp_root, ".env.secret"))
+
+  cfg <- hscida:::config_from_env()
+
+  expect_equal(cfg$glob_pattern, "glob('{projroot}/{dataset}/*.parquet')")
+  expect_equal(cfg$init_sql, "SELECT 7")
+  expect_equal(cfg$duckdb_config, list(threads = "4"))
+  expect_equal(cfg$projroot, "/tmp/from-secret")
+})
+
 test_that("data_access can register and query csv", {
   csv_path <- tempfile(fileext = ".csv")
   readr::write_csv(

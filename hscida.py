@@ -21,6 +21,7 @@ class DataAccessConfig:
 def config_from_env() -> DataAccessConfig:
     c = {
         **dotenv_values(),
+        **dotenv_values(here(".env.secret")),
         **os.environ,
     }
     return DataAccessConfig(
