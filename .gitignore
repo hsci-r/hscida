@@ -6,3 +6,5 @@ __pycache__/
 .RData
 .Ruserdata
 .history
+hscida.Rcheck/
+*.tar.gz

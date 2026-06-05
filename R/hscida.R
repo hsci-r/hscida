@@ -1,4 +1,13 @@
 
+#' Read data access configuration from environment variables.
+#'
+#' Loads values from the process environment (and optional `.env` file), then
+#' builds the configuration list consumed by the package data access helpers.
+#'
+#' @return A list containing `glob_pattern`, `init_sql`, `duckdb_config`, and
+#'   `projroot`.
+#' @keywords internal
+#' @noRd
 config_from_env <- function() {
   dotenv::load_dot_env(here::here(".env"))
   duckdb_config <- Sys.getenv("DUCKDB_CONFIG", "parquet_metadata_cache=true,preserve_insertion_order=false,enable_fsst_vectors=true") |>
@@ -28,14 +37,19 @@ config_from_env <- function() {
 #'   projroot = tempdir()
 #' )
 #' da <- data_access(cfg)
+#' DBI::dbDisconnect(da$con, shutdown = TRUE)
 data_access <- function(config = config_from_env()) {
+  if (!requireNamespace("bit64", quietly = TRUE)) {
+    stop("Package 'bit64' is required for bigint='integer64'.", call. = FALSE)
+  }
+
   con <- DBI::dbConnect(
     duckdb::duckdb(bigint = "integer64"),
     bigint = "integer64",
     config = config$duckdb_config
   )
   DBI::dbExecute(con, glue::glue(config$init_sql))
-  datasets = new.env()
+  datasets <- new.env(parent = emptyenv())
   register_files_as_view <- function(table_name, paths, replace = FALSE) {
     query <- glue::glue("
       CREATE {ifelse(replace, 'OR REPLACE', '')} VIEW {ifelse(replace, '', 'IF NOT EXISTS')} {table_name} AS 
@@ -47,24 +61,27 @@ data_access <- function(config = config_from_env()) {
     DBI::dbExecute(con, query)
   }
   f <- function(dataset, ..., replace = FALSE, debug = FALSE) {
-    if (!exists(dataset, envir = datasets, inherits = FALSE) || replace) {
+    if (!exists(dataset, envir = datasets) || replace) {
       paths <- list(...)
       if (length(paths) == 0)
-        paths <- dplyr::tbl(con, glue::glue_data(list(dataset=dataset, projroot=config$projroot), config$glob_pattern)) |>
+        paths <- dplyr::tbl(
+          dbplyr::src_dbi(con),
+          glue::glue_data(list(dataset = dataset, projroot = config$projroot), config$glob_pattern)
+        ) |>
           dplyr::pull(file)
       if (debug)
         message(glue::glue("Registering dataset {dataset} with paths: {paths}"))
       if (length(paths) == 0) {
         warning(glue::glue("No files found for dataset {dataset} in {config[['glob_pattern']]}"))
-        return
+        return(invisible(NULL))
       }
       register_files_as_view(dataset, paths, replace = replace)
       assign(dataset, dplyr::tbl(
-        con,
+        dbplyr::src_dbi(con),
         dataset
       ), envir = datasets)
     }
-    get(dataset, envir = datasets, inherits = FALSE)
+    get(dataset, envir = datasets)
   }
   list(con = con, f = f)
 }

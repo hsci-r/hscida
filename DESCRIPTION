@@ -1,5 +1,5 @@
 Package: hscida
-Title: HSCI data access provider
+Title: HSCI Data Access Provider
 Version: 0.1.0
 Authors@R: c(
     person(given = "Eetu",
@@ -8,11 +8,10 @@ Authors@R: c(
            email = "eetu.makela@helsinki.fi",
            comment = c(ORCID = "0000-0002-8366-8414"))
            )
-Description: HSCI data access provider
+Description: Provides data access helpers for HSCI datasets using DuckDB.
 License: file LICENSE
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
-RoxygenNote: 7.3.1
 Imports:
     bit64,
     DBI,
@@ -31,3 +30,4 @@ Suggests:
 Config/testthat/edition: 3
 Depends: 
     R (>= 4.1.0)
+Config/roxygen2/version: 8.0.0
