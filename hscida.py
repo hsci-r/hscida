@@ -118,7 +118,7 @@ class DataAccess:
         self.session = DuckDBSession(conn=self.con)
         self.datasets = dict[str, tuple[nw.LazyFrame[duckdb.DuckDBPyRelation], nw.LazyFrame[DuckDBDataFrame]]]()
 
-    def ensure_dataset(self, dataset: str, *paths: str, replace: bool, debug: bool) -> None:
+    def ensure_dataset(self, dataset: str, *paths: str, replace: bool, debug: bool) -> bool:
         if dataset not in self.datasets or replace:
             if not paths:
                 paths = tuple(path[0] for path in self.con.sql("FROM "+self.config.glob_pattern.format(dataset=dataset,projroot=self.config.projroot)).fetchall())
@@ -126,18 +126,25 @@ class DataAccess:
                 print(f"DEBUG: Found paths for dataset {dataset}: {paths}")
             if not paths:
                 print(f"No files found for dataset {dataset} in {self.config.glob_pattern.format(dataset=dataset,projroot=self.config.projroot)}")
-                return
+                return False
             self.con.sql(f"CREATE {('OR REPLACE' if replace else '')} VIEW {'IF NOT EXISTS' if not replace else ''} {dataset} AS FROM read_{'parquet' if paths[0].endswith('.parquet') else 'csv'}(['{"', '".join(paths)}'], hive_partitioning=true);")
             self.datasets[dataset] = (nw.from_native(self.con.sql(f'FROM {dataset}')), nw.from_native(self.session.table(dataset)))
+        return True
 
-    def nf(self, dataset: str, *paths: str,replace: bool = False, debug: bool = False) -> nw.LazyFrame[duckdb.DuckDBPyRelation]:
-        self.ensure_dataset(dataset, *paths, replace=replace, debug=debug)
-        return self.datasets[dataset][0]
+    def df(self, dataset: str, *paths: str,replace: bool = False, debug: bool = False) -> nw.LazyFrame[duckdb.DuckDBPyRelation]:
+        if self.ensure_dataset(dataset, *paths, replace=replace, debug=debug):
+            return self.datasets[dataset][0]
+        else:
+            return cast(nw.LazyFrame[duckdb.DuckDBPyRelation], None)
     
     def sf(self, dataset: str, *paths: str, replace: bool = False, debug: bool = False) -> nw.LazyFrame[DuckDBDataFrame]:
-        self.ensure_dataset(dataset, *paths, replace=replace, debug=debug)
-        return self.datasets[dataset][1]
-    
+        if self.ensure_dataset(dataset, *paths, replace=replace, debug=debug):
+            return self.datasets[dataset][1]
+        else:
+            return cast(nw.LazyFrame[DuckDBDataFrame], None)
+        
+    f = sf
+
     def close(self) -> None:
         self.session.stop()
         self.con.close()

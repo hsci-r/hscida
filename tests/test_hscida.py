@@ -1,7 +1,10 @@
 from pathlib import Path
 
+import narwhals
+
 import hscida as hs
 import polars as pl
+import pytest
 
 from hscida import DataAccessConfig, config_from_env, DataAccess, to_narwhals, to_pandas, to_polars, to_spark
 
@@ -120,7 +123,8 @@ def test_config_from_env_concatenates_numbered_init_sql(monkeypatch):
     )
 
 
-def test_data_access_loads_csv_and_converts(tmp_path: Path):
+@pytest.mark.parametrize("accessor", ["df", "sf"])
+def test_data_access_loads_csv_and_converts(tmp_path: Path, accessor: str):
     dataset_path = tmp_path / "sample.csv"
     pl.DataFrame({"x": [1, 2], "y": ["a", "b"]}).write_csv(dataset_path)
 
@@ -130,12 +134,12 @@ def test_data_access_loads_csv_and_converts(tmp_path: Path):
         projroot=str(tmp_path),
     )
     with DataAccess(cfg) as da:
-        lazy = da.nf("sample")
+        lazy: narwhals.LazyFrame = getattr(da, accessor)("sample")
         polars_df = to_polars(lazy)
-        
+
         pandas_df = to_pandas(lazy)
-        pyspark_df = to_spark(da.sf('sample')).collect()
-        pyspark_nw_pd = da.sf('sample').collect().to_pandas()
+        pyspark_df = da.to_spark(lazy).collect()
+        pyspark_nw_pd = lazy.collect().to_pandas()
 
     assert polars_df.shape == (2, 2)
     assert pandas_df.shape == (2, 2)
@@ -148,7 +152,8 @@ def test_data_access_loads_csv_and_converts(tmp_path: Path):
     assert pyspark_nw_pd.equals(pandas_df)
 
 
-def test_data_access_caches_relation(tmp_path: Path):
+@pytest.mark.parametrize("accessor", ["df", "sf"])
+def test_data_access_caches_relation(tmp_path: Path, accessor: str):
     dataset_path = tmp_path / "cache.csv"
     pl.DataFrame({"v": [10]}).write_csv(dataset_path)
 
@@ -158,12 +163,20 @@ def test_data_access_caches_relation(tmp_path: Path):
         projroot=str(tmp_path),
     )
     with DataAccess(cfg) as da:
-        first = da.nf("cache")
-        second = da.nf("cache")
-
-        first2 = da.sf("cache")
-        second2 = da.sf("cache")
+        first = getattr(da, accessor)("cache")
+        second = getattr(da, accessor)("cache")
 
     assert first is second
-    assert first2 is second2
+
+def test_equality(tmp_path: Path):
+    dataset_path = tmp_path / "sample.csv"
+    pl.DataFrame({"x": [1, 2], "y": ["a", "b"]}).write_csv(dataset_path)
+
+    cfg = DataAccessConfig(
+        glob_pattern="glob('{projroot}/{dataset}.csv')",
+        init_sql="SELECT 1",
+        projroot=str(tmp_path),
+    )
+    with DataAccess(cfg) as da:
+        assert to_polars(da.df("sample")).equals(to_polars(da.sf("sample")))
 
