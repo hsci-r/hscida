@@ -3,7 +3,7 @@ from pathlib import Path
 import hscida as hs
 import polars as pl
 
-from hscida import DataAccessConfig, config_from_env, data_access, n, to_narwhals, to_pandas, to_polars
+from hscida import DataAccessConfig, config_from_env, DataAccess, to_narwhals, to_pandas, to_polars, to_spark
 
 
 def test_config_from_env_parses_values(monkeypatch):
@@ -125,20 +125,17 @@ def test_data_access_loads_csv_and_converts(tmp_path: Path):
     pl.DataFrame({"x": [1, 2], "y": ["a", "b"]}).write_csv(dataset_path)
 
     cfg = DataAccessConfig(
-        glob_pattern="glob('{projroot}/{dataset}/*.csv')",
+        glob_pattern="glob('{projroot}/{dataset}.csv')",
         init_sql="SELECT 1",
         projroot=str(tmp_path),
     )
-    f, con, ses = data_access(cfg)
-    lazy = f("sample", str(dataset_path))
-    polars_df = to_polars(lazy)
-    
-    pandas_df = to_pandas(lazy)
-    pyspark_df = ses.table('sample').collect()
-    pyspark_nw_pd = n(ses.table('sample')).collect().to_pandas()
-
-    con.close()
-    ses.stop()
+    with DataAccess(cfg) as da:
+        lazy = da.nf("sample")
+        polars_df = to_polars(lazy)
+        
+        pandas_df = to_pandas(lazy)
+        pyspark_df = to_spark(da.sf('sample')).collect()
+        pyspark_nw_pd = da.sf('sample').collect().to_pandas()
 
     assert polars_df.shape == (2, 2)
     assert pandas_df.shape == (2, 2)
@@ -156,16 +153,17 @@ def test_data_access_caches_relation(tmp_path: Path):
     pl.DataFrame({"v": [10]}).write_csv(dataset_path)
 
     cfg = DataAccessConfig(
-        glob_pattern="glob('{projroot}/{dataset}/*.csv')",
+        glob_pattern="glob('{projroot}/{dataset}.csv')",
         init_sql="SELECT 1",
         projroot=str(tmp_path),
     )
-    f, con, ses = data_access(cfg)
-    first = f("cache", str(dataset_path))
-    second = f("cache")
+    with DataAccess(cfg) as da:
+        first = da.nf("cache")
+        second = da.nf("cache")
 
-    con.close()
-    ses.stop()
+        first2 = da.sf("cache")
+        second2 = da.sf("cache")
 
     assert first is second
+    assert first2 is second2
 
