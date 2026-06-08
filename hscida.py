@@ -79,4 +79,4 @@ p = to_polars
 def to_pandas(lnf: nw.LazyFrame[duckdb.DuckDBPyRelation]):
     return d(lnf).df()
 
-__all__ = [ "data_access", "c", "l", "to_narwhals", "n", "to_duckdb", "d", "to_polars", "p","to_pandas" ]
+__all__ = [ "data_access", "nw", "c", "l", "to_narwhals", "n", "to_duckdb", "d", "to_polars", "p","to_pandas" ]
