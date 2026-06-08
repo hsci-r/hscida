@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "hscida"
-version = "0.1.3"
+version = "0.2.0"
 description = "HSCI data access provider"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -16,6 +16,7 @@ dependencies = [
     "pandas>=3.0.3",
     "pyarrow>=22.0.0",
     "polars>=1.40.1",
+    "sqlframe[duckdb]>=4.2.0",
 ]
 
 [dependency-groups]

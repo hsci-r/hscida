@@ -1,8 +1,10 @@
 from dataclasses import dataclass, field
-from typing import Any, Callable, cast
+from typing import Any, Callable, cast, overload
 from hereutil import here
 import narwhals as nw
 import duckdb
+from sqlframe.duckdb import DuckDBDataFrame, DuckDBSession
+from sqlframe.duckdb import functions as F
 import os
 import polars as pl
 
@@ -36,7 +38,7 @@ def config_from_env() -> DataAccessConfig:
         projroot=c.get('PROJROOT', _PROJROOT)
     )
 
-def data_access(config: DataAccessConfig = config_from_env()) -> tuple[duckdb.DuckDBPyConnection, Callable[..., nw.LazyFrame[duckdb.DuckDBPyRelation]]]:
+def data_access(config: DataAccessConfig = config_from_env()) -> tuple[Callable[..., nw.LazyFrame[duckdb.DuckDBPyRelation]], duckdb.DuckDBPyConnection, DuckDBSession]:
     con = duckdb.connect(config=config.duckdb_config)
     con.sql(config.init_sql)
     datasets = dict[str, nw.LazyFrame[duckdb.DuckDBPyRelation]]()
@@ -56,27 +58,59 @@ def data_access(config: DataAccessConfig = config_from_env()) -> tuple[duckdb.Du
             register_files_as_view(dataset, *paths, replace=replace)
             datasets[dataset] = nw.from_native(con.sql(f'FROM {dataset}'))
         return datasets[dataset]
-    return con, f
+    return f, con, DuckDBSession(conn=con)
 
 c = nw.col
 l = nw.lit
 
-def to_narwhals(duckdb_relation: duckdb.DuckDBPyRelation) -> nw.LazyFrame[duckdb.DuckDBPyRelation]:
-    return nw.from_native(duckdb_relation)
+@overload
+def to_narwhals(duckdb_relation: DuckDBDataFrame) -> nw.LazyFrame[DuckDBDataFrame]: ...
+
+@overload
+def to_narwhals(duckdb_relation: duckdb.DuckDBPyRelation) -> nw.LazyFrame[duckdb.DuckDBPyRelation]: ...
+    
+def to_narwhals(duckdb_relation: DuckDBDataFrame|duckdb.DuckDBPyRelation) -> nw.LazyFrame[DuckDBDataFrame]|nw.LazyFrame[duckdb.DuckDBPyRelation]:
+    if isinstance(duckdb_relation, DuckDBDataFrame):
+        return nw.from_native(duckdb_relation)
+    else:
+        return nw.from_native(duckdb_relation)
 
 n = to_narwhals
 
-def to_duckdb(lnf: nw.LazyFrame[duckdb.DuckDBPyRelation]) -> duckdb.DuckDBPyRelation:
-    return lnf.to_native()
+def to_duckdb(lnf: DuckDBDataFrame|nw.LazyFrame[duckdb.DuckDBPyRelation]|nw.LazyFrame[DuckDBDataFrame]) -> duckdb.DuckDBPyRelation:
+    if isinstance(lnf, DuckDBDataFrame):
+        return cast(duckdb.DuckDBPyConnection, cast(DuckDBSession, lnf.session)._conn).sql(lnf.sql(dialect="duckdb"))
+    elif lnf.implementation.is_duckdb():
+        return cast(duckdb.DuckDBPyRelation, lnf.to_native())
+    else:
+        dbf = cast(DuckDBDataFrame, lnf.to_native())
+        return cast(duckdb.DuckDBPyConnection, cast(DuckDBSession, dbf.session)._conn).sql(dbf.sql(dialect="duckdb"))
 
 d = to_duckdb
 
-def to_polars(lnf: nw.LazyFrame[duckdb.DuckDBPyRelation]) -> pl.DataFrame:
+@overload
+def to_spark(lnf: duckdb.DuckDBPyRelation|nw.LazyFrame[duckdb.DuckDBPyRelation], s: DuckDBSession) -> DuckDBDataFrame: ...
+
+@overload
+def to_spark(lnf: nw.LazyFrame[DuckDBDataFrame]) -> DuckDBDataFrame: ...
+
+def to_spark(lnf: duckdb.DuckDBPyRelation|nw.LazyFrame[DuckDBDataFrame]|nw.LazyFrame[duckdb.DuckDBPyRelation], s: DuckDBSession | None = None) -> DuckDBDataFrame: 
+    if isinstance(lnf, duckdb.DuckDBPyRelation):
+        return cast(DuckDBSession, s).sql(lnf.sql_query(), dialect="duckdb")
+    elif lnf.implementation.is_duckdb():
+        dbf = cast(duckdb.DuckDBPyRelation, lnf.to_native())
+        return cast(DuckDBSession, s).sql(dbf.sql_query(), dialect="duckdb")
+    else:
+        return cast(DuckDBDataFrame, lnf.to_native())
+
+s = to_spark
+
+def to_polars(lnf: nw.LazyFrame[duckdb.DuckDBPyRelation]|nw.LazyFrame[DuckDBDataFrame]) -> pl.DataFrame:
     return lnf.collect(backend='polars').to_native()
 
 p = to_polars
 
-def to_pandas(lnf: nw.LazyFrame[duckdb.DuckDBPyRelation]):
-    return d(lnf).df()
+def to_pandas(lnf: nw.LazyFrame[duckdb.DuckDBPyRelation]|nw.LazyFrame[DuckDBDataFrame]):
+    return to_duckdb(lnf).df()
 
-__all__ = [ "data_access", "nw", "c", "l", "to_narwhals", "n", "to_duckdb", "d", "to_polars", "p","to_pandas" ]
+__all__ = [ "data_access", "nw", "c", "l", "to_narwhals", "n", "to_duckdb", "d", "to_spark", "F", "s", "to_polars", "p", "to_pandas" ]

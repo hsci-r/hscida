@@ -3,7 +3,7 @@ from pathlib import Path
 import hscida as hs
 import polars as pl
 
-from hscida import DataAccessConfig, config_from_env, data_access, to_pandas, to_polars
+from hscida import DataAccessConfig, config_from_env, data_access, n, to_narwhals, to_pandas, to_polars
 
 
 def test_config_from_env_parses_values(monkeypatch):
@@ -129,16 +129,26 @@ def test_data_access_loads_csv_and_converts(tmp_path: Path):
         init_sql="SELECT 1",
         projroot=str(tmp_path),
     )
-    con, f = data_access(cfg)
+    f, con, ses = data_access(cfg)
     lazy = f("sample", str(dataset_path))
     polars_df = to_polars(lazy)
+    
     pandas_df = to_pandas(lazy)
+    pyspark_df = ses.table('sample').collect()
+    pyspark_nw_pd = n(ses.table('sample')).collect().to_pandas()
 
     con.close()
+    ses.stop()
 
     assert polars_df.shape == (2, 2)
     assert pandas_df.shape == (2, 2)
+    assert len(pyspark_df) == 2
     assert set(polars_df.columns) == {"x", "y"}
+    assert pyspark_df[0]["x"] == 1
+    assert pyspark_df[0]["y"] == "a"
+    assert pyspark_df[1]["x"] == 2
+    assert pyspark_df[1]["y"] == "b"
+    assert pyspark_nw_pd.equals(pandas_df)
 
 
 def test_data_access_caches_relation(tmp_path: Path):
@@ -150,10 +160,12 @@ def test_data_access_caches_relation(tmp_path: Path):
         init_sql="SELECT 1",
         projroot=str(tmp_path),
     )
-    con, f = data_access(cfg)
+    f, con, ses = data_access(cfg)
     first = f("cache", str(dataset_path))
     second = f("cache")
 
     con.close()
+    ses.stop()
 
     assert first is second
+
