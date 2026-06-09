@@ -1,83 +1,95 @@
 from dataclasses import dataclass, field
-from typing import Any, Callable, cast, overload
+from typing import Any, cast, overload
 from hereutil import here
 import narwhals as nw
 import duckdb
+from duckdb import DuckDBPyRelation
+from sqlframe import activate_context
 from sqlframe.duckdb import DuckDBDataFrame, DuckDBSession
 from sqlframe.duckdb import functions as F
 import os
 import polars as pl
 
 from dotenv import dotenv_values
-
-c = nw.col
-l = nw.lit
+from sqlglot import Dialect
 
 @overload
-def to_narwhals(duckdb_relation: DuckDBDataFrame) -> nw.LazyFrame[DuckDBDataFrame]: ...
+def to_narwhals(df: DuckDBDataFrame) -> nw.LazyFrame[DuckDBDataFrame]: ...
 
 @overload
-def to_narwhals(duckdb_relation: duckdb.DuckDBPyRelation) -> nw.LazyFrame[duckdb.DuckDBPyRelation]: ...
+def to_narwhals(df: DuckDBPyRelation) -> nw.LazyFrame[DuckDBPyRelation]: ...
+
+@overload
+def to_narwhals(df: nw.LazyFrame[DuckDBDataFrame]) -> nw.LazyFrame[DuckDBDataFrame]: ...
+
+@overload
+def to_narwhals(df: nw.LazyFrame[DuckDBPyRelation]) -> nw.LazyFrame[DuckDBPyRelation]: ...
     
-def to_narwhals(duckdb_relation: DuckDBDataFrame|duckdb.DuckDBPyRelation) -> nw.LazyFrame[DuckDBDataFrame]|nw.LazyFrame[duckdb.DuckDBPyRelation]:
-    if isinstance(duckdb_relation, DuckDBDataFrame):
-        return nw.from_native(duckdb_relation)
+def to_narwhals(df: DuckDBDataFrame|DuckDBPyRelation|nw.LazyFrame[DuckDBDataFrame]|nw.LazyFrame[DuckDBPyRelation]) -> nw.LazyFrame[DuckDBDataFrame]|nw.LazyFrame[DuckDBPyRelation]:
+    if isinstance(df, nw.LazyFrame):
+        return df
+    elif isinstance(df, DuckDBDataFrame):
+        return nw.from_native(df)
     else:
-        return nw.from_native(duckdb_relation)
+        return nw.from_native(df)
 
 n = to_narwhals
 
-def to_duckdb(lnf: DuckDBDataFrame|nw.LazyFrame[duckdb.DuckDBPyRelation]|nw.LazyFrame[DuckDBDataFrame], optimize: bool = False, pretty: bool = False) -> duckdb.DuckDBPyRelation:
-    if isinstance(lnf, DuckDBDataFrame):
-        return cast(duckdb.DuckDBPyConnection, cast(DuckDBSession, lnf.session)._conn).sql(lnf.sql(dialect="duckdb", optimize=optimize, pretty=pretty))
+def to_duckdb(lnf: DuckDBPyRelation|DuckDBDataFrame|nw.LazyFrame[DuckDBPyRelation]|nw.LazyFrame[DuckDBDataFrame]|DuckDBPyRelation, optimize: bool = False, pretty: bool = False) -> DuckDBPyRelation:
+    if isinstance(lnf, DuckDBPyRelation):
+        return lnf
+    elif isinstance(lnf, DuckDBDataFrame):
+        return cast(duckdb.DuckDBPyConnection, cast(DuckDBSession, lnf.session)._conn).sql(lnf.sql(optimize=optimize, pretty=pretty))
     elif lnf.implementation.is_duckdb():
-        return cast(duckdb.DuckDBPyRelation, lnf.to_native())
+        return cast(DuckDBPyRelation, lnf.to_native())
     else:
         dbf = cast(DuckDBDataFrame, lnf.to_native())
-        return cast(duckdb.DuckDBPyConnection, cast(DuckDBSession, dbf.session)._conn).sql(dbf.sql(dialect="duckdb", optimize=optimize, pretty=pretty))
+        return cast(duckdb.DuckDBPyConnection, cast(DuckDBSession, dbf.session)._conn).sql(dbf.sql(optimize=optimize, pretty=pretty))
 
 d = to_duckdb
 
 @overload
-def to_spark(lnf: duckdb.DuckDBPyRelation|nw.LazyFrame[duckdb.DuckDBPyRelation], session: DuckDBSession) -> DuckDBDataFrame: ...
+def to_spark(lnf: DuckDBPyRelation|nw.LazyFrame[DuckDBPyRelation], session: DuckDBSession) -> DuckDBDataFrame: ...
 
 @overload
-def to_spark(lnf: nw.LazyFrame[DuckDBDataFrame]) -> DuckDBDataFrame: ...
+def to_spark(lnf: DuckDBDataFrame|nw.LazyFrame[DuckDBDataFrame], session: DuckDBSession | None = None) -> DuckDBDataFrame: ...
 
-def to_spark(lnf: duckdb.DuckDBPyRelation|nw.LazyFrame[DuckDBDataFrame]|nw.LazyFrame[duckdb.DuckDBPyRelation], session: DuckDBSession | None = None) -> DuckDBDataFrame: 
-    if isinstance(lnf, duckdb.DuckDBPyRelation):
-        return cast(DuckDBSession, session).sql(lnf.sql_query(), dialect="duckdb")
+def to_spark(lnf: DuckDBPyRelation|DuckDBDataFrame|nw.LazyFrame[DuckDBDataFrame]|nw.LazyFrame[DuckDBPyRelation], session: DuckDBSession | None = None) -> DuckDBDataFrame: 
+    if isinstance(lnf, DuckDBPyRelation):
+        return cast(DuckDBSession, session).sql(lnf.sql_query())
+    elif isinstance(lnf, DuckDBDataFrame):
+        return lnf
     elif lnf.implementation.is_duckdb():
-        dbf = cast(duckdb.DuckDBPyRelation, lnf.to_native())
-        return cast(DuckDBSession, session).sql(dbf.sql_query(), dialect="duckdb")
+        dbf = cast(DuckDBPyRelation, lnf.to_native())
+        return cast(DuckDBSession, session).sql(dbf.sql_query())
     else:
         return cast(DuckDBDataFrame, lnf.to_native())
 
 s = to_spark
 
-def to_polars(lnf: nw.LazyFrame[duckdb.DuckDBPyRelation]|nw.LazyFrame[DuckDBDataFrame]) -> pl.DataFrame:
-    return lnf.collect(backend='polars').to_native()
+def to_polars(lnf: nw.LazyFrame[DuckDBPyRelation]|nw.LazyFrame[DuckDBDataFrame]|DuckDBPyRelation|DuckDBDataFrame) -> pl.DataFrame:
+    return to_duckdb(lnf).pl()
 
 p = to_polars
 
-def to_pandas(lnf: nw.LazyFrame[duckdb.DuckDBPyRelation]|nw.LazyFrame[DuckDBDataFrame]):
+def to_pandas(lnf: nw.LazyFrame[DuckDBPyRelation]|nw.LazyFrame[DuckDBDataFrame]|DuckDBPyRelation|DuckDBDataFrame):
     return to_duckdb(lnf).df()
 
 @overload
-def to_sql(lnf: duckdb.DuckDBPyRelation|nw.LazyFrame[duckdb.DuckDBPyRelation]) -> str: ...
+def to_sql(lnf: DuckDBPyRelation|nw.LazyFrame[DuckDBPyRelation], optimize: bool = False, pretty: bool = False) -> str: ...
 
 @overload
 def to_sql(lnf: DuckDBDataFrame|nw.LazyFrame[DuckDBDataFrame], optimize: bool = False, pretty: bool = False) -> str: ...
 
-def to_sql(lnf: duckdb.DuckDBPyRelation|DuckDBDataFrame|nw.LazyFrame[duckdb.DuckDBPyRelation]|nw.LazyFrame[DuckDBDataFrame], optimize: bool = False, pretty: bool = False) -> str:
-    if isinstance(lnf, duckdb.DuckDBPyRelation):
+def to_sql(lnf: DuckDBPyRelation|DuckDBDataFrame|nw.LazyFrame[DuckDBPyRelation]|nw.LazyFrame[DuckDBDataFrame], optimize: bool = False, pretty: bool = False) -> str:
+    if isinstance(lnf, DuckDBPyRelation):
         return lnf.sql_query()
     elif isinstance(lnf, DuckDBDataFrame):
-        return lnf.sql(dialect="duckdb", optimize=optimize, pretty=pretty)
+        return lnf.sql(optimize=optimize, pretty=pretty)
     elif lnf.implementation.is_duckdb():
-        return cast(duckdb.DuckDBPyRelation, lnf.to_native()).sql_query()
+        return cast(DuckDBPyRelation, lnf.to_native()).sql_query()
     else:
-        return cast(DuckDBDataFrame, lnf.to_native()).sql(dialect="duckdb", optimize=optimize, pretty=pretty)
+        return cast(DuckDBDataFrame, lnf.to_native()).sql(optimize=optimize, pretty=pretty)
 
 q = to_sql
 
@@ -116,9 +128,11 @@ class DataAccess:
         self.con = duckdb.connect(config=config.duckdb_config)
         self.con.sql(config.init_sql)
         self.session = DuckDBSession(conn=self.con)
-        self.datasets = dict[str, tuple[nw.LazyFrame[duckdb.DuckDBPyRelation], nw.LazyFrame[DuckDBDataFrame]]]()
+        self.session.input_dialect = Dialect.get_or_raise("duckdb")
+        self.session.output_dialect = Dialect.get_or_raise("duckdb")
+        self.datasets = dict[str, tuple[nw.LazyFrame[DuckDBPyRelation], nw.LazyFrame[DuckDBDataFrame]]]()
 
-    def ensure_dataset(self, dataset: str, *paths: str, replace: bool, debug: bool) -> bool:
+    def ensure_dataset(self, dataset: str, *paths: str, replace: bool, debug: bool):
         if dataset not in self.datasets or replace:
             if not paths:
                 paths = tuple(path[0] for path in self.con.sql("FROM "+self.config.glob_pattern.format(dataset=dataset,projroot=self.config.projroot)).fetchall())
@@ -126,25 +140,46 @@ class DataAccess:
                 print(f"DEBUG: Found paths for dataset {dataset}: {paths}")
             if not paths:
                 print(f"No files found for dataset {dataset} in {self.config.glob_pattern.format(dataset=dataset,projroot=self.config.projroot)}")
-                return False
+                self.datasets[dataset] = cast(tuple[nw.LazyFrame[DuckDBPyRelation], nw.LazyFrame[DuckDBDataFrame]], (None, None))
             self.con.sql(f"CREATE {('OR REPLACE' if replace else '')} VIEW {'IF NOT EXISTS' if not replace else ''} {dataset} AS FROM read_{'parquet' if paths[0].endswith('.parquet') else 'csv'}(['{"', '".join(paths)}'], hive_partitioning=true);")
             self.datasets[dataset] = (nw.from_native(self.con.sql(f'FROM {dataset}')), nw.from_native(self.session.table(dataset)))
-        return True
 
-    def df(self, dataset: str, *paths: str,replace: bool = False, debug: bool = False) -> nw.LazyFrame[duckdb.DuckDBPyRelation]:
-        if self.ensure_dataset(dataset, *paths, replace=replace, debug=debug):
-            return self.datasets[dataset][0]
-        else:
-            return cast(nw.LazyFrame[duckdb.DuckDBPyRelation], None)
+    def narwhals_duckdb_dataframe(self, dataset: str, *paths: str,replace: bool = False, debug: bool = False) -> nw.LazyFrame[DuckDBPyRelation]:
+        self.ensure_dataset(dataset, *paths, replace=replace, debug=debug)
+        return self.datasets[dataset][0]
     
-    def sf(self, dataset: str, *paths: str, replace: bool = False, debug: bool = False) -> nw.LazyFrame[DuckDBDataFrame]:
-        if self.ensure_dataset(dataset, *paths, replace=replace, debug=debug):
-            return self.datasets[dataset][1]
-        else:
-            return cast(nw.LazyFrame[DuckDBDataFrame], None)
-        
-    f = sf
+    nddf = narwhals_duckdb_dataframe
 
+    def duckdb_dataframe(self, dataset: str, *paths: str, replace: bool = False, debug: bool = False) -> DuckDBPyRelation:
+        self.ensure_dataset(dataset, *paths, replace=replace, debug=debug)
+        return to_duckdb(self.datasets[dataset][0])
+    
+    ddf = duckdb_dataframe
+
+    def narwhals_spark_dataframe(self, dataset: str, *paths: str, replace: bool = False, debug: bool = False) -> nw.LazyFrame[DuckDBDataFrame]:
+        self.ensure_dataset(dataset, *paths, replace=replace, debug=debug)
+        return self.datasets[dataset][1]
+    
+    nsdf = narwhals_spark_dataframe
+    
+    def spark_dataframe(self, dataset: str, *paths: str, replace: bool = False, debug: bool = False) -> DuckDBDataFrame:
+        self.ensure_dataset(dataset, *paths, replace=replace, debug=debug)
+        return to_spark(self.datasets[dataset][1])
+    
+    sdf = spark_dataframe
+
+    def spark_dataframe_from_sql(self, sql: str) -> DuckDBDataFrame:
+        return self.session.sql(sql)
+    
+    def duckdb_dataframe_from_sql(self, sql: str) -> DuckDBPyRelation:
+        return self.con.sql(sql)
+    
+    def narwhals_duckdb_dataframe_from_sql(self, sql: str) -> nw.LazyFrame[DuckDBPyRelation]:
+        return to_narwhals(self.con.sql(sql))
+    
+    def narwhals_spark_dataframe_from_sql(self, sql: str) -> nw.LazyFrame[DuckDBDataFrame]:
+        return to_narwhals(self.session.sql(sql))
+    
     def close(self) -> None:
         self.session.stop()
         self.con.close()
@@ -155,15 +190,32 @@ class DataAccess:
     def __exit__(self, exc_type, exc_value, traceback) -> None:
         self.close()
 
-    def to_spark(self, lnf: duckdb.DuckDBPyRelation|nw.LazyFrame[DuckDBDataFrame]|nw.LazyFrame[duckdb.DuckDBPyRelation]) -> DuckDBDataFrame: 
-        if isinstance(lnf, duckdb.DuckDBPyRelation):
-            return cast(DuckDBSession, self.session).sql(lnf.sql_query(), dialect="duckdb")
-        elif lnf.implementation.is_duckdb():
-            dbf = cast(duckdb.DuckDBPyRelation, lnf.to_native())
-            return cast(DuckDBSession, self.session).sql(dbf.sql_query(), dialect="duckdb")
-        else:
-            return cast(DuckDBDataFrame, lnf.to_native())
-        
+    def to_narwhals(self, df: DuckDBDataFrame|DuckDBPyRelation|nw.LazyFrame[DuckDBDataFrame]|nw.LazyFrame[DuckDBPyRelation]) -> nw.LazyFrame[DuckDBDataFrame]|nw.LazyFrame[DuckDBPyRelation]:
+        return to_narwhals(df)
+
+    n = to_narwhals
+
+    def to_duckdb(self, lnf: DuckDBPyRelation|DuckDBDataFrame|nw.LazyFrame[DuckDBPyRelation]|nw.LazyFrame[DuckDBDataFrame], optimize: bool = False, pretty: bool = False) -> DuckDBPyRelation:
+        return to_duckdb(lnf, optimize=optimize, pretty=pretty)
+
+    d = to_duckdb
+
+    def to_spark(self, lnf: DuckDBPyRelation|DuckDBDataFrame|nw.LazyFrame[DuckDBDataFrame]|nw.LazyFrame[DuckDBPyRelation]) -> DuckDBDataFrame:
+        return to_spark(lnf, session=self.session)
+
     s = to_spark
 
-__all__ = [ "DataAccess", "nw", "c", "l", "to_narwhals", "n", "to_duckdb", "d", "to_spark", "F", "s", "to_polars", "p", "to_pandas", "to_sql", "q" ]
+    def to_polars(self, lnf: nw.LazyFrame[DuckDBPyRelation]|nw.LazyFrame[DuckDBDataFrame]|DuckDBPyRelation|DuckDBDataFrame) -> pl.DataFrame:
+        return to_polars(lnf)
+
+    p = to_polars
+
+    def to_pandas(self, lnf: nw.LazyFrame[DuckDBPyRelation]|nw.LazyFrame[DuckDBDataFrame]|DuckDBPyRelation|DuckDBDataFrame):
+        return to_pandas(lnf)
+
+    def to_sql(self, lnf: DuckDBPyRelation|DuckDBDataFrame|nw.LazyFrame[DuckDBPyRelation]|nw.LazyFrame[DuckDBDataFrame], optimize: bool = False, pretty: bool = False) -> str:
+        return to_sql(lnf, optimize=optimize, pretty=pretty)
+
+    q = to_sql
+
+__all__ = [ "DataAccess", "nw", "to_narwhals", "n", "to_duckdb", "d", "to_spark", "F", "s", "to_polars", "p", "to_pandas", "to_sql", "q", "DuckDBDataFrame", "DuckDBSession", "DuckDBPyRelation" ]

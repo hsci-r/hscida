@@ -1,6 +1,8 @@
 from pathlib import Path
 
+from duckdb import DuckDBPyRelation
 import narwhals
+from sqlframe.duckdb import DuckDBDataFrame
 
 import hscida as hs
 import polars as pl
@@ -123,8 +125,7 @@ def test_config_from_env_concatenates_numbered_init_sql(monkeypatch):
     )
 
 
-@pytest.mark.parametrize("accessor", ["df", "sf"])
-def test_data_access_loads_csv_and_converts(tmp_path: Path, accessor: str):
+def test_data_access_loads_csv_as_duckdb_dataframe(tmp_path: Path):
     dataset_path = tmp_path / "sample.csv"
     pl.DataFrame({"x": [1, 2], "y": ["a", "b"]}).write_csv(dataset_path)
 
@@ -134,25 +135,52 @@ def test_data_access_loads_csv_and_converts(tmp_path: Path, accessor: str):
         projroot=str(tmp_path),
     )
     with DataAccess(cfg) as da:
-        lazy: narwhals.LazyFrame = getattr(da, accessor)("sample")
-        polars_df = to_polars(lazy)
+        frame = da.duckdb_dataframe("sample")
+        columns = frame.columns
+        rows = frame.fetchall()
 
-        pandas_df = to_pandas(lazy)
-        pyspark_df = da.to_spark(lazy).collect()
-        pyspark_nw_pd = lazy.collect().to_pandas()
-
-    assert polars_df.shape == (2, 2)
-    assert pandas_df.shape == (2, 2)
-    assert len(pyspark_df) == 2
-    assert set(polars_df.columns) == {"x", "y"}
-    assert pyspark_df[0]["x"] == 1
-    assert pyspark_df[0]["y"] == "a"
-    assert pyspark_df[1]["x"] == 2
-    assert pyspark_df[1]["y"] == "b"
-    assert pyspark_nw_pd.equals(pandas_df)
+    assert columns == ["x", "y"]
+    assert rows == [(1, "a"), (2, "b")]
 
 
-@pytest.mark.parametrize("accessor", ["df", "sf"])
+def test_data_access_loads_csv_as_spark_dataframe(tmp_path: Path):
+    dataset_path = tmp_path / "sample.csv"
+    pl.DataFrame({"x": [1, 2], "y": ["a", "b"]}).write_csv(dataset_path)
+
+    cfg = DataAccessConfig(
+        glob_pattern="glob('{projroot}/{dataset}.csv')",
+        init_sql="SELECT 1",
+        projroot=str(tmp_path),
+    )
+    with DataAccess(cfg) as da:
+        frame = da.spark_dataframe("sample")
+        columns = frame.columns
+        rows = frame.collect()
+
+    assert columns == ["x", "y"]
+    assert [row.asDict() for row in rows] == [{"x": 1, "y": "a"}, {"x": 2, "y": "b"}]
+
+
+@pytest.mark.parametrize("accessor", ["narwhals_duckdb_dataframe", "narwhals_spark_dataframe"])
+def test_data_access_loads_csv_as_narwhals_dataframe(tmp_path: Path, accessor: str):
+    dataset_path = tmp_path / "sample.csv"
+    pl.DataFrame({"x": [1, 2], "y": ["a", "b"]}).write_csv(dataset_path)
+
+    cfg = DataAccessConfig(
+        glob_pattern="glob('{projroot}/{dataset}.csv')",
+        init_sql="SELECT 1",
+        projroot=str(tmp_path),
+    )
+    with DataAccess(cfg) as da:
+        frame: narwhals.LazyFrame = getattr(da, accessor)("sample")
+        columns = frame.collect_schema().names()
+        rows = frame.collect().to_native().to_pylist()
+
+    assert columns == ["x", "y"]
+    assert rows == [{"x": 1, "y": "a"}, {"x": 2, "y": "b"}]
+
+
+@pytest.mark.parametrize("accessor", ["duckdb_dataframe", "spark_dataframe", "narwhals_duckdb_dataframe", "narwhals_spark_dataframe"])
 def test_data_access_caches_relation(tmp_path: Path, accessor: str):
     dataset_path = tmp_path / "cache.csv"
     pl.DataFrame({"v": [10]}).write_csv(dataset_path)
@@ -168,6 +196,52 @@ def test_data_access_caches_relation(tmp_path: Path, accessor: str):
 
     assert first is second
 
+
+@pytest.mark.parametrize(
+    "accessor",
+    [
+        "duckdb_dataframe_from_sql",
+        "spark_dataframe_from_sql",
+        "narwhals_duckdb_dataframe_from_sql",
+        "narwhals_spark_dataframe_from_sql",
+    ],
+)
+def test_data_access_from_sql_generators_return_expected_data(tmp_path: Path, accessor: str):
+    cfg = DataAccessConfig(
+        glob_pattern="glob('{projroot}/{dataset}.csv')",
+        init_sql="SELECT 1",
+        projroot=str(tmp_path),
+    )
+    sql = "SELECT 1 AS x, 'a' AS y"
+
+    with DataAccess(cfg) as da:
+        result = getattr(da, accessor)(sql)
+        polars_df = to_polars(result)
+
+    assert polars_df.shape == (1, 2)
+    assert polars_df.to_dict(as_series=False) == {"x": [1], "y": ["a"]}
+
+
+def test_data_access_from_sql_generators_match_across_backends(tmp_path: Path):
+    cfg = DataAccessConfig(
+        glob_pattern="glob('{projroot}/{dataset}.csv')",
+        init_sql="SELECT 1",
+        projroot=str(tmp_path),
+    )
+    sql = "SELECT 1 AS x, 'a' AS y"
+
+    with DataAccess(cfg) as da:
+        duckdb_df = da.duckdb_dataframe_from_sql(sql)
+        spark_df = da.spark_dataframe_from_sql(sql)
+        narwhals_duckdb_df = da.narwhals_duckdb_dataframe_from_sql(sql)
+        narwhals_spark_df = da.narwhals_spark_dataframe_from_sql(sql)
+        expected = to_polars(duckdb_df)
+
+        assert to_polars(spark_df).equals(expected)
+        assert to_polars(narwhals_duckdb_df).equals(expected)
+        assert to_polars(narwhals_spark_df).equals(expected)
+
+
 def test_equality(tmp_path: Path):
     dataset_path = tmp_path / "sample.csv"
     pl.DataFrame({"x": [1, 2], "y": ["a", "b"]}).write_csv(dataset_path)
@@ -178,5 +252,33 @@ def test_equality(tmp_path: Path):
         projroot=str(tmp_path),
     )
     with DataAccess(cfg) as da:
-        assert to_polars(da.df("sample")).equals(to_polars(da.sf("sample")))
+        assert to_polars(da.duckdb_dataframe("sample")).equals(to_polars(da.narwhals_duckdb_dataframe("sample")))
 
+def test_conversions(tmp_path: Path):
+    dataset_path = tmp_path / "sample.csv"
+    pl.DataFrame({"x": [1, 2], "y": ["a", "b"]}).write_csv(dataset_path)
+
+    cfg = DataAccessConfig(
+        glob_pattern="glob('{projroot}/{dataset}.csv')",
+        init_sql="SELECT 1",
+        projroot=str(tmp_path),
+    )
+    with DataAccess(cfg) as da:
+        for accessor in ["duckdb_dataframe", "spark_dataframe", "narwhals_duckdb_dataframe", "narwhals_spark_dataframe"]:
+            df = getattr(da, accessor)("sample")
+            if isinstance(df, narwhals.LazyFrame):
+                df = df.filter(narwhals.col("x") >=    0).filter(narwhals.col("y") != "b")
+            elif isinstance(df, DuckDBDataFrame):
+                df = df.filter(df["x"] >= 0).filter(df["y"] != "b")
+            elif isinstance(df, DuckDBPyRelation):
+                df = df.filter('x >= 0').filter("y != 'b'")
+            assert to_polars(df).equals(pl.DataFrame({"x": [1], "y": ["a"]}))
+            for converter1 in ["to_duckdb", "to_spark", "to_narwhals"]:
+                for converter2 in ["to_duckdb", "to_spark", "to_narwhals"]:
+                    for converter3 in ["to_duckdb", "to_spark", "to_narwhals"]:
+                        converted1 = getattr(da, converter1)(df)
+                        converted2 = getattr(da, converter2)(converted1)
+                        converted3 = getattr(da, converter3)(converted2)
+                        assert to_polars(df).equals(to_polars(converted1))
+                        assert to_polars(df).equals(to_polars(converted2))
+                        assert to_polars(df).equals(to_polars(converted3))
