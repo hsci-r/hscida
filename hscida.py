@@ -13,6 +13,8 @@ import polars as pl
 from dotenv import dotenv_values
 from sqlglot import Dialect
 
+type DuckDBackedBDataFrameLike = DuckDBDataFrame | DuckDBPyRelation | nw.LazyFrame[DuckDBDataFrame] | nw.LazyFrame[DuckDBPyRelation]
+
 @overload
 def to_narwhals(df: DuckDBDataFrame) -> nw.LazyFrame[DuckDBDataFrame]: ...
 
@@ -25,7 +27,7 @@ def to_narwhals(df: nw.LazyFrame[DuckDBDataFrame]) -> nw.LazyFrame[DuckDBDataFra
 @overload
 def to_narwhals(df: nw.LazyFrame[DuckDBPyRelation]) -> nw.LazyFrame[DuckDBPyRelation]: ...
     
-def to_narwhals(df: DuckDBDataFrame|DuckDBPyRelation|nw.LazyFrame[DuckDBDataFrame]|nw.LazyFrame[DuckDBPyRelation]) -> nw.LazyFrame[DuckDBDataFrame]|nw.LazyFrame[DuckDBPyRelation]:
+def to_narwhals(df: DuckDBackedBDataFrameLike) -> nw.LazyFrame[DuckDBDataFrame]|nw.LazyFrame[DuckDBPyRelation]:
     if isinstance(df, nw.LazyFrame):
         return df
     elif isinstance(df, DuckDBDataFrame):
@@ -35,7 +37,7 @@ def to_narwhals(df: DuckDBDataFrame|DuckDBPyRelation|nw.LazyFrame[DuckDBDataFram
 
 n = to_narwhals
 
-def to_duckdb(lnf: DuckDBPyRelation|DuckDBDataFrame|nw.LazyFrame[DuckDBPyRelation]|nw.LazyFrame[DuckDBDataFrame]|DuckDBPyRelation, optimize: bool = False, pretty: bool = False) -> DuckDBPyRelation:
+def to_duckdb(lnf: DuckDBackedBDataFrameLike, optimize: bool = False, pretty: bool = False) -> DuckDBPyRelation:
     if isinstance(lnf, DuckDBPyRelation):
         return lnf
     elif isinstance(lnf, DuckDBDataFrame):
@@ -54,7 +56,7 @@ def to_spark(lnf: DuckDBPyRelation|nw.LazyFrame[DuckDBPyRelation], session: Duck
 @overload
 def to_spark(lnf: DuckDBDataFrame|nw.LazyFrame[DuckDBDataFrame], session: DuckDBSession | None = None) -> DuckDBDataFrame: ...
 
-def to_spark(lnf: DuckDBPyRelation|DuckDBDataFrame|nw.LazyFrame[DuckDBDataFrame]|nw.LazyFrame[DuckDBPyRelation], session: DuckDBSession | None = None) -> DuckDBDataFrame: 
+def to_spark(lnf: DuckDBackedBDataFrameLike, session: DuckDBSession | None = None) -> DuckDBDataFrame: 
     if isinstance(lnf, DuckDBPyRelation):
         return cast(DuckDBSession, session).sql(lnf.sql_query())
     elif isinstance(lnf, DuckDBDataFrame):
@@ -67,12 +69,12 @@ def to_spark(lnf: DuckDBPyRelation|DuckDBDataFrame|nw.LazyFrame[DuckDBDataFrame]
 
 s = to_spark
 
-def to_polars(lnf: nw.LazyFrame[DuckDBPyRelation]|nw.LazyFrame[DuckDBDataFrame]|DuckDBPyRelation|DuckDBDataFrame) -> pl.DataFrame:
+def to_polars(lnf: DuckDBackedBDataFrameLike) -> pl.DataFrame:
     return to_duckdb(lnf).pl()
 
 p = to_polars
 
-def to_pandas(lnf: nw.LazyFrame[DuckDBPyRelation]|nw.LazyFrame[DuckDBDataFrame]|DuckDBPyRelation|DuckDBDataFrame):
+def to_pandas(lnf: DuckDBackedBDataFrameLike):
     return to_duckdb(lnf).df()
 
 @overload
@@ -81,7 +83,7 @@ def to_sql(lnf: DuckDBPyRelation|nw.LazyFrame[DuckDBPyRelation], optimize: bool 
 @overload
 def to_sql(lnf: DuckDBDataFrame|nw.LazyFrame[DuckDBDataFrame], optimize: bool = False, pretty: bool = False) -> str: ...
 
-def to_sql(lnf: DuckDBPyRelation|DuckDBDataFrame|nw.LazyFrame[DuckDBPyRelation]|nw.LazyFrame[DuckDBDataFrame], optimize: bool = False, pretty: bool = False) -> str:
+def to_sql(lnf: DuckDBackedBDataFrameLike, optimize: bool = False, pretty: bool = False) -> str:
     if isinstance(lnf, DuckDBPyRelation):
         return lnf.sql_query()
     elif isinstance(lnf, DuckDBDataFrame):
@@ -190,30 +192,30 @@ class DataAccess:
     def __exit__(self, exc_type, exc_value, traceback) -> None:
         self.close()
 
-    def to_narwhals(self, df: DuckDBDataFrame|DuckDBPyRelation|nw.LazyFrame[DuckDBDataFrame]|nw.LazyFrame[DuckDBPyRelation]) -> nw.LazyFrame[DuckDBDataFrame]|nw.LazyFrame[DuckDBPyRelation]:
+    def to_narwhals(self, df: DuckDBackedBDataFrameLike) -> nw.LazyFrame[DuckDBDataFrame]|nw.LazyFrame[DuckDBPyRelation]:
         return to_narwhals(df)
 
     n = to_narwhals
 
-    def to_duckdb(self, lnf: DuckDBPyRelation|DuckDBDataFrame|nw.LazyFrame[DuckDBPyRelation]|nw.LazyFrame[DuckDBDataFrame], optimize: bool = False, pretty: bool = False) -> DuckDBPyRelation:
+    def to_duckdb(self, lnf: DuckDBackedBDataFrameLike, optimize: bool = False, pretty: bool = False) -> DuckDBPyRelation:
         return to_duckdb(lnf, optimize=optimize, pretty=pretty)
 
     d = to_duckdb
 
-    def to_spark(self, lnf: DuckDBPyRelation|DuckDBDataFrame|nw.LazyFrame[DuckDBDataFrame]|nw.LazyFrame[DuckDBPyRelation]) -> DuckDBDataFrame:
+    def to_spark(self, lnf: DuckDBackedBDataFrameLike) -> DuckDBDataFrame:
         return to_spark(lnf, session=self.session)
 
     s = to_spark
 
-    def to_polars(self, lnf: nw.LazyFrame[DuckDBPyRelation]|nw.LazyFrame[DuckDBDataFrame]|DuckDBPyRelation|DuckDBDataFrame) -> pl.DataFrame:
+    def to_polars(self, lnf: DuckDBackedBDataFrameLike) -> pl.DataFrame:
         return to_polars(lnf)
 
     p = to_polars
 
-    def to_pandas(self, lnf: nw.LazyFrame[DuckDBPyRelation]|nw.LazyFrame[DuckDBDataFrame]|DuckDBPyRelation|DuckDBDataFrame):
+    def to_pandas(self, lnf: DuckDBackedBDataFrameLike):
         return to_pandas(lnf)
 
-    def to_sql(self, lnf: DuckDBPyRelation|DuckDBDataFrame|nw.LazyFrame[DuckDBPyRelation]|nw.LazyFrame[DuckDBDataFrame], optimize: bool = False, pretty: bool = False) -> str:
+    def to_sql(self, lnf: DuckDBackedBDataFrameLike, optimize: bool = False, pretty: bool = False) -> str:
         return to_sql(lnf, optimize=optimize, pretty=pretty)
 
     q = to_sql
