@@ -8,8 +8,7 @@ import hscida as hs
 import polars as pl
 import pytest
 
-from hscida import DataAccessConfig, config_from_env, DataAccess, to_narwhals, to_pandas, to_polars, to_spark
-
+from hscida import DataAccessConfig, config_from_env, DataAccess, to_polars
 
 def test_config_from_env_parses_values(monkeypatch):
     monkeypatch.setenv("GLOB_PATTERN", "glob('{projroot}/{dataset}/*.csv')")

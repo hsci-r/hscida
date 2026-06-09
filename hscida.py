@@ -220,4 +220,4 @@ class DataAccess:
 
     q = to_sql
 
-__all__ = [ "DataAccess", "nw", "to_narwhals", "n", "to_duckdb", "d", "to_spark", "F", "s", "to_polars", "p", "to_pandas", "to_sql", "q", "DuckDBDataFrame", "DuckDBSession", "DuckDBPyRelation" ]
+__all__ = [ "DataAccess", "nw", "to_narwhals", "n", "to_duckdb", "d", "to_spark", "F", "s", "to_polars", "p", "to_pandas", "to_sql", "q", "DuckDBDataFrame", "DuckDBSession", "DuckDBPyRelation", "DuckDBackedBDataFrameLike", "pl" ]
