@@ -83,13 +83,21 @@ def to_sql(lnf: DuckDBPyRelation|nw.LazyFrame[DuckDBPyRelation], optimize: bool 
 @overload
 def to_sql(lnf: DuckDBDataFrame|nw.LazyFrame[DuckDBDataFrame], optimize: bool = False, pretty: bool = False) -> str: ...
 
+import sqlglot
+
 def to_sql(lnf: DuckDBackedBDataFrameLike, optimize: bool = False, pretty: bool = False) -> str:
     if isinstance(lnf, DuckDBPyRelation):
-        return lnf.sql_query()
+        if pretty:
+            return ';\n'.join(sqlglot.transpile(lnf.sql_query(), read="duckdb", write="duckdb", pretty=True))
+        else:
+            return lnf.sql_query()
     elif isinstance(lnf, DuckDBDataFrame):
         return lnf.sql(optimize=optimize, pretty=pretty)
     elif lnf.implementation.is_duckdb():
-        return cast(DuckDBPyRelation, lnf.to_native()).sql_query()
+        if pretty:
+            return ';\n'.join(sqlglot.transpile(cast(DuckDBPyRelation, lnf.to_native()).sql_query(), read="duckdb", write="duckdb", pretty=True))
+        else:
+            return cast(DuckDBPyRelation, lnf.to_native()).sql_query()
     else:
         return cast(DuckDBDataFrame, lnf.to_native()).sql(optimize=optimize, pretty=pretty)
 
