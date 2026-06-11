@@ -111,11 +111,9 @@ def config_from_env() -> DataAccessConfig:
         **dotenv_values(here(".env.secret")),
         **os.environ,
     }
-    init_sql = c.get('INIT_SQL', '')
-    i = 1
-    while f"INIT_SQL_{i}" in c:
-        init_sql += c[f"INIT_SQL_{i}"]
-        i += 1
+    init_sql = ""
+    for k in sorted(k for k in c.keys() if k.startswith("INIT_SQL")):
+        init_sql += c[k]
     return DataAccessConfig(
         glob_pattern=c.get('GLOB_PATTERN', ''),
         init_sql=init_sql,
@@ -134,7 +132,7 @@ class DataAccess:
         self.session.output_dialect = Dialect.get_or_raise("duckdb")
         self.datasets = dict[str, tuple[nw.LazyFrame[DuckDBPyRelation], nw.LazyFrame[DuckDBDataFrame]]]()
 
-    def ensure_dataset(self, dataset: str, *paths: str, replace: bool, debug: bool):
+    def ensure_dataset(self, dataset: str, *paths: str, replace: bool = False, debug: bool = False) -> None:
         if dataset not in self.datasets or replace:
             if not paths:
                 paths = tuple(path[0] for path in self.con.sql("FROM "+self.config.glob_pattern.format(dataset=dataset,projroot=self.config.projroot)).fetchall())

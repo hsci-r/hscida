@@ -1,4 +1,5 @@
 from pathlib import Path
+import os
 
 from duckdb import DuckDBPyRelation
 import narwhals
@@ -122,6 +123,22 @@ def test_config_from_env_concatenates_numbered_init_sql(monkeypatch):
         "INSERT INTO t VALUES (2);"
         "SELECT * FROM t;"
     )
+
+
+def test_config_from_env_builds_init_sql_from_env_var_names(monkeypatch):
+    monkeypatch.setattr(hs, "dotenv_values", lambda path=None: {})
+    for key in list(os.environ):
+        if key.startswith("INIT_SQL"):
+            monkeypatch.delenv(key, raising=False)
+
+    monkeypatch.setenv("INIT_SQL", "m;")
+    monkeypatch.setenv("INIT_SQL_A", "z;")
+    monkeypatch.setenv("INIT_SQL_Z", "a;")
+    monkeypatch.setenv("UNRELATED_SQL", "INIT_SQL_SHOULD_NOT_APPEAR;")
+
+    config = config_from_env()
+
+    assert config.init_sql == "m;z;a;"
 
 
 def test_data_access_loads_csv_as_duckdb_dataframe(tmp_path: Path):

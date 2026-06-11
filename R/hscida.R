@@ -24,6 +24,12 @@ config_from_env <- function() {
     init_sql <- stringr::str_c(init_sql, Sys.getenv(stringr::str_c("INIT_SQL_", i)))
     i <- i + 1
   }
+  init_sql <- Sys.getenv() |>
+    tibble::enframe() |>
+    dplyr::filter(name |> stringr::str_starts("INIT_SQL")) |>
+    dplyr::arrange(name) |>
+    dplyr::pull(value) |>
+    stringr::str_c(collapse = "")
   list(
     glob_pattern = Sys.getenv("GLOB_PATTERN"),
     init_sql = init_sql,

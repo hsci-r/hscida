@@ -73,6 +73,45 @@ test_that("config_from_env concatenates INIT_SQL and INIT_SQL_1,2,3", {
   )
 })
 
+test_that("config_from_env builds init_sql from env var names", {
+  tmp_root <- tempfile("dotenv-root-")
+  dir.create(tmp_root)
+
+  testthat::local_mocked_bindings(
+    here = function(...) file.path(tmp_root, ...),
+    .package = "here"
+  )
+
+  init_sql_names <- names(Sys.getenv())[
+    stringr::str_starts(names(Sys.getenv()), "INIT_SQL")
+  ]
+  env_names <- unique(c(
+    init_sql_names,
+    "INIT_SQL", "INIT_SQL_A", "INIT_SQL_Z", "UNRELATED_SQL"
+  ))
+  old_env <- Sys.getenv(env_names, unset = NA_character_)
+
+  on.exit({
+    Sys.unsetenv(env_names)
+    values_to_restore <- old_env[!is.na(old_env)]
+    if (length(values_to_restore) > 0) {
+      do.call(Sys.setenv, as.list(values_to_restore))
+    }
+  }, add = TRUE)
+
+  Sys.unsetenv(env_names)
+  Sys.setenv(
+    INIT_SQL = "m;",
+    INIT_SQL_A = "z;",
+    INIT_SQL_Z = "a;",
+    UNRELATED_SQL = "INIT_SQL_SHOULD_NOT_APPEAR;"
+  )
+
+  cfg <- hscida:::config_from_env()
+
+  expect_equal(cfg$init_sql, "m;z;a;")
+})
+
 test_that("data_access can register and query csv", {
   csv_path <- tempfile(fileext = ".csv")
   readr::write_csv(
