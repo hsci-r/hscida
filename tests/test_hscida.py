@@ -159,6 +159,26 @@ def test_data_access_loads_csv_as_duckdb_dataframe(tmp_path: Path):
     assert rows == [(1, "a"), (2, "b")]
 
 
+def test_data_access_loads_multiple_parquet_paths_with_extension_reader(tmp_path: Path):
+    first_path = tmp_path / "part-000.parquet"
+    second_path = tmp_path / "part-001.parquet"
+    pl.DataFrame({"x": [1], "y": ["a"]}).write_parquet(first_path)
+    pl.DataFrame({"x": [2], "y": ["b"]}).write_parquet(second_path)
+
+    cfg = DataAccessConfig(
+        glob_pattern="",
+        init_sql="SELECT 1",
+        projroot=str(tmp_path),
+    )
+    with DataAccess(cfg) as da:
+        frame = da.duckdb_dataframe("sample", str(first_path), str(second_path))
+        columns = frame.columns
+        rows = frame.order("x").fetchall()
+
+    assert columns == ["x", "y"]
+    assert rows == [(1, "a"), (2, "b")]
+
+
 def test_data_access_loads_csv_as_spark_dataframe(tmp_path: Path):
     dataset_path = tmp_path / "sample.csv"
     pl.DataFrame({"x": [1, 2], "y": ["a", "b"]}).write_csv(dataset_path)

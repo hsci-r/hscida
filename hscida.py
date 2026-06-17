@@ -149,7 +149,14 @@ class DataAccess:
             if not paths:
                 print(f"No files found for dataset {dataset} in {self.config.glob_pattern.format(dataset=dataset,projroot=self.config.projroot)}")
                 self.datasets[dataset] = cast(tuple[nw.LazyFrame[DuckDBPyRelation], nw.LazyFrame[DuckDBDataFrame]], (None, None))
-            self.con.sql(f"CREATE {('OR REPLACE' if replace else '')} VIEW {'IF NOT EXISTS' if not replace else ''} {dataset} AS FROM read_{'parquet' if paths[0].endswith('.parquet') else 'csv'}(['{"', '".join(paths)}'], hive_partitioning=true);")
+                return
+            if len(paths) == 1:
+                source = f"'{paths[0]}'"
+            else:
+                reader = "read_csv" if paths[0].endswith((".tsv", ".tsv.gz", ".csv.gz")) else f"read_{paths[0].rsplit('.', 1)[-1]}"
+                paths_sql = "', '".join(paths)
+                source = f"{reader}(['{paths_sql}'], hive_partitioning=true)"
+            self.con.sql(f"CREATE {('OR REPLACE' if replace else '')} VIEW {'IF NOT EXISTS' if not replace else ''} {dataset} AS FROM {source};")
             self.datasets[dataset] = (nw.from_native(self.con.sql(f'FROM {dataset}')), nw.from_native(self.session.table(dataset)))
 
     def narwhals_duckdb_dataframe(self, dataset: str, *paths: str,replace: bool = False, debug: bool = False) -> nw.LazyFrame[DuckDBPyRelation]:

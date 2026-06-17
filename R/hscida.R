@@ -67,18 +67,26 @@ data_access <- function(config = config_from_env()) {
   DBI::dbExecute(con, glue::glue(config$init_sql))
   datasets <- new.env(parent = emptyenv())
   register_files_as_view <- function(table_name, paths, replace = FALSE) {
+    if (length(paths) == 1) {
+      source <- stringr::str_c("'", paths[1], "'")
+    } else {
+      reader <- ifelse(
+        stringr::str_ends(paths[1], stringr::regex("\\.(tsv|tsv\\.gz|csv\\.gz)$")),
+        "read_csv",
+        stringr::str_c("read_", stringr::str_extract(paths[1], stringr::regex("[^.]+$")))
+      )
+      paths_sql <- stringr::str_c("'", paths, "'", collapse = ", ")
+      source <- glue::glue("{reader}([{paths_sql}], hive_partitioning = true)")
+    }
     query <- glue::glue("
       CREATE {ifelse(replace, 'OR REPLACE', '')} VIEW {ifelse(replace, '', 'IF NOT EXISTS')} {table_name} AS 
-      FROM read_{ifelse(grepl('\\\\.parquet$', paths[1]), 'parquet', 'csv')}(
-        ['{paste(paths, collapse = \"', '\")}'], 
-        hive_partitioning = true
-      );
+      FROM {source};
     ")
     DBI::dbExecute(con, query)
   }
   f <- function(dataset, ..., replace = FALSE, debug = FALSE) {
     if (!exists(dataset, envir = datasets) || replace) {
-      paths <- list(...)
+      paths <- unlist(list(...), use.names = FALSE)
       if (length(paths) == 0)
         paths <- dplyr::tbl(
           con,

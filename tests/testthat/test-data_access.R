@@ -140,6 +140,36 @@ test_that("data_access can register and query csv", {
   expect_true(all(c("x", "y") %in% names(out)))
 })
 
+test_that("data_access can register and query multiple parquet paths", {
+  first_path <- tempfile(fileext = ".parquet")
+  second_path <- tempfile(fileext = ".parquet")
+
+  writer <- DBI::dbConnect(duckdb::duckdb(), dbdir = ":memory:")
+  on.exit(DBI::dbDisconnect(writer, shutdown = TRUE), add = TRUE)
+  DBI::dbExecute(writer, "CREATE TABLE first_part AS SELECT 1 AS x, 'a' AS y")
+  DBI::dbExecute(writer, "CREATE TABLE second_part AS SELECT 2 AS x, 'b' AS y")
+  DBI::dbExecute(writer, glue::glue("COPY first_part TO '{first_path}' (FORMAT PARQUET)"))
+  DBI::dbExecute(writer, glue::glue("COPY second_part TO '{second_path}' (FORMAT PARQUET)"))
+
+  cfg <- list(
+    glob_pattern = "",
+    init_sql = "SELECT 1",
+    duckdb_config = list(),
+    projroot = tempdir()
+  )
+
+  da <- data_access(cfg)
+  on.exit(DBI::dbDisconnect(da$con, shutdown = TRUE), add = TRUE)
+
+  tbl <- da$f("sample", first_path, second_path, replace = FALSE, debug = FALSE)
+  out <- tbl |>
+    dplyr::arrange(x) |>
+    dplyr::collect()
+
+  expect_equal(out$x, c(1, 2))
+  expect_equal(out$y, c("a", "b"))
+})
+
 test_that("data_access caches datasets", {
   csv_path <- tempfile(fileext = ".csv")
   readr::write_csv(
