@@ -91,7 +91,7 @@ dependencies = []
 
 [[packages]]
 name = "dbplyr"
-version = "2.5.2"
+version = "2.6.0"
 source = { repository = "https://cloud.r-project.org/" }
 force_source = false
 dependencies = [
@@ -160,7 +160,7 @@ dependencies = [
 
 [[packages]]
 name = "duckdb"
-version = "1.5.2"
+version = "1.5.4"
 source = { repository = "https://cloud.r-project.org/" }
 force_source = false
 dependencies = [
@@ -284,7 +284,7 @@ dependencies = []
 
 [[packages]]
 name = "pkgload"
-version = "1.5.2"
+version = "1.5.3"
 source = { repository = "https://cloud.r-project.org/" }
 force_source = false
 dependencies = [
@@ -549,7 +549,7 @@ dependencies = [
 
 [[packages]]
 name = "withr"
-version = "3.0.2"
+version = "3.0.3"
 source = { repository = "https://cloud.r-project.org/" }
 force_source = false
 dependencies = []

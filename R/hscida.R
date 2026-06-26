@@ -14,16 +14,6 @@ ignore_unused_imports <- function() {
 config_from_env <- function() {
   try(dotenv::load_dot_env(here::here(".env")), silent = TRUE)
   try(dotenv::load_dot_env(here::here(".env.secret")), silent = TRUE)
-  duckdb_config <- Sys.getenv("DUCKDB_CONFIG", "parquet_metadata_cache=true,preserve_insertion_order=false,enable_fsst_vectors=true") |>
-    stringr::str_split_1(stringr::fixed(",")) |>
-    purrr::set_names(\(pair) stringr::str_extract(pair, stringr::regex("^[^=]+"))) |>
-    purrr::map(\(pair) stringr::str_extract(pair, stringr::regex("[^=]+$")))
-  i <- 1
-  init_sql <- Sys.getenv("INIT_SQL", "")
-  while(!is.na(Sys.getenv(stringr::str_c("INIT_SQL_", i), unset = NA_character_))) {
-    init_sql <- stringr::str_c(init_sql, Sys.getenv(stringr::str_c("INIT_SQL_", i)))
-    i <- i + 1
-  }
   init_sql <- Sys.getenv() |>
     tibble::enframe() |>
     dplyr::filter(name |> stringr::str_starts("INIT_SQL")) |>
@@ -31,9 +21,9 @@ config_from_env <- function() {
     dplyr::pull(value) |>
     stringr::str_c(collapse = "")
   list(
-    glob_pattern = Sys.getenv("GLOB_PATTERN"),
+    path_query = Sys.getenv("PATH_QUERY"),
     init_sql = init_sql,
-    duckdb_config = duckdb_config,
+    view_definition_query = Sys.getenv("VIEW_DEFINITION_QUERY", "CREATE{or_replace} VIEW{if_not_exists} {dataset} AS FROM {source};"),
     projroot = Sys.getenv("PROJROOT", here::here())
   )
 }
@@ -47,9 +37,9 @@ config_from_env <- function() {
 #'
 #' @examples
 #' cfg <- list(
-#'   glob_pattern = "glob('{projroot}/{dataset}/*.csv')",
+#'   path_query = "FROM glob('{projroot}/{dataset}/*.csv')",
 #'   init_sql = "SELECT 1",
-#'   duckdb_config = list(),
+#'   view_definition_query = "CREATE{or_replace} VIEW{if_not_exists} {dataset} AS FROM {source};",
 #'   projroot = tempdir()
 #' )
 #' da <- data_access(cfg)
@@ -61,12 +51,11 @@ data_access <- function(config = config_from_env()) {
 
   con <- DBI::dbConnect(
     duckdb::duckdb(bigint = "integer64"),
-    bigint = "integer64",
-    config = config$duckdb_config
+    bigint = "integer64"
   )
   DBI::dbExecute(con, glue::glue(config$init_sql))
   datasets <- new.env(parent = emptyenv())
-  register_files_as_view <- function(table_name, paths, replace = FALSE) {
+  register_files_as_view <- function(dataset, paths, replace = FALSE) {
     if (length(paths) == 1) {
       source <- stringr::str_c("'", paths[1], "'")
     } else {
@@ -78,10 +67,7 @@ data_access <- function(config = config_from_env()) {
       paths_sql <- stringr::str_c("'", paths, "'", collapse = ", ")
       source <- glue::glue("{reader}([{paths_sql}], hive_partitioning = true)")
     }
-    query <- glue::glue("
-      CREATE {ifelse(replace, 'OR REPLACE', '')} VIEW {ifelse(replace, '', 'IF NOT EXISTS')} {table_name} AS 
-      FROM {source};
-    ")
+    query <- glue::glue(config$view_definition_query, .open = "{", .close = "}", or_replace = ifelse(replace, " OR REPLACE", ""), if_not_exists = ifelse(replace, "", " IF NOT EXISTS"), dataset = dataset, source = source)
     DBI::dbExecute(con, query)
   }
   f <- function(dataset, ..., replace = FALSE, debug = FALSE) {

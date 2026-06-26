@@ -1,6 +1,6 @@
 Package: hscida
 Title: HSCI Data Access Provider
-Version: 0.4.4
+Version: 0.5.0
 Authors@R: c(
     person(given = "Eetu",
            family = "Mäkelä",

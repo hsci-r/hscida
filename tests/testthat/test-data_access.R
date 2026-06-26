@@ -1,7 +1,7 @@
 library(hscida)
 
 test_that("config_from_env reads values from .env", {
-  Sys.unsetenv(c("GLOB_PATTERN", "INIT_SQL", "DUCKDB_CONFIG", "PROJROOT"))
+  Sys.unsetenv(c("PATH_QUERY", "INIT_SQL", "PROJROOT"))
 
   tmp_root <- tempfile("dotenv-root-")
   dir.create(tmp_root)
@@ -12,22 +12,20 @@ test_that("config_from_env reads values from .env", {
   )
 
   writeLines(c(
-    "GLOB_PATTERN=glob('{projroot}/{dataset}/*.csv')",
+    "PATH_QUERY=FROM glob('{projroot}/{dataset}/*.csv')",
     "INIT_SQL=SELECT 42",
-    "DUCKDB_CONFIG=threads=1,enable_fsst_vectors=true",
     "PROJROOT=/tmp/from-dotenv"
   ), file.path(tmp_root, ".env"))
 
   cfg <- hscida:::config_from_env()
 
-  expect_equal(cfg$glob_pattern, "glob('{projroot}/{dataset}/*.csv')")
+  expect_equal(cfg$path_query, "FROM glob('{projroot}/{dataset}/*.csv')")
   expect_equal(cfg$init_sql, "SELECT 42")
-  expect_equal(cfg$duckdb_config, list(threads = "1", enable_fsst_vectors = "true"))
   expect_equal(cfg$projroot, "/tmp/from-dotenv")
 })
 
 test_that("config_from_env also reads .env.secret", {
-  Sys.unsetenv(c("GLOB_PATTERN", "INIT_SQL", "DUCKDB_CONFIG", "PROJROOT"))
+  Sys.unsetenv(c("PATH_QUERY", "INIT_SQL", "VIEW_DEFINITION_QUERY", "PROJROOT"))
 
   tmp_root <- tempfile("dotenv-root-")
   dir.create(tmp_root)
@@ -38,24 +36,24 @@ test_that("config_from_env also reads .env.secret", {
   )
 
   writeLines(c(
-    "GLOB_PATTERN=glob('{projroot}/{dataset}/*.parquet')",
+    "PATH_QUERY=FROM glob('{projroot}/{dataset}/*.parquet')",
     "INIT_SQL=SELECT 7",
-    "DUCKDB_CONFIG=threads=4",
+    "VIEW_DEFINITION_QUERY=CREATE{or_replace} VIEW{if_not_exists} {dataset} AS SELECT 42;",
     "PROJROOT=/tmp/from-secret"
   ), file.path(tmp_root, ".env.secret"))
 
   cfg <- hscida:::config_from_env()
 
-  expect_equal(cfg$glob_pattern, "glob('{projroot}/{dataset}/*.parquet')")
+  expect_equal(cfg$path_query, "FROM glob('{projroot}/{dataset}/*.parquet')")
   expect_equal(cfg$init_sql, "SELECT 7")
-  expect_equal(cfg$duckdb_config, list(threads = "4"))
+  expect_equal(cfg$view_definition_query, "CREATE{or_replace} VIEW{if_not_exists} {dataset} AS SELECT 42;")
   expect_equal(cfg$projroot, "/tmp/from-secret")
 })
 
 test_that("config_from_env concatenates INIT_SQL and INIT_SQL_1,2,3", {
   Sys.unsetenv(c(
-    "GLOB_PATTERN", "INIT_SQL", "INIT_SQL_1", "INIT_SQL_2", "INIT_SQL_3", "INIT_SQL_4",
-    "DUCKDB_CONFIG", "PROJROOT"
+    "PATH_QUERY", "INIT_SQL", "INIT_SQL_1", "INIT_SQL_2", "INIT_SQL_3", "INIT_SQL_4",
+    "VIEW_DEFINITION_QUERY", "PROJROOT"
   ))
 
   Sys.setenv(
@@ -124,9 +122,9 @@ test_that("data_access can register and query csv", {
   )
 
   cfg <- list(
-    glob_pattern = "glob('{projroot}/{dataset}/*.csv')",
+    path_query = "FROM glob('{projroot}/{dataset}/*.csv')",
     init_sql = "SELECT 1",
-    duckdb_config = list(),
+    view_definition_query = "CREATE OR REPLACE VIEW {dataset} AS FROM {source}",
     projroot = tempdir()
   )
 
@@ -152,9 +150,9 @@ test_that("data_access can register and query multiple parquet paths", {
   DBI::dbExecute(writer, glue::glue("COPY second_part TO '{second_path}' (FORMAT PARQUET)"))
 
   cfg <- list(
-    glob_pattern = "",
+    path_query = "FROM glob('{projroot}/{dataset}/*.parquet')",
     init_sql = "SELECT 1",
-    duckdb_config = list(),
+    view_definition_query = "CREATE OR REPLACE VIEW {dataset} AS FROM {source}",
     projroot = tempdir()
   )
 
@@ -181,9 +179,9 @@ test_that("data_access caches datasets", {
   )
 
   cfg <- list(
-    glob_pattern = "glob('{projroot}/{dataset}/*.csv')",
+    path_query = "FROM glob('{projroot}/{dataset}/*.csv')",
     init_sql = "SELECT 1",
-    duckdb_config = list(),
+    view_definition_query = "CREATE OR REPLACE VIEW {dataset} AS FROM {source}",
     projroot = tempdir()
   )
 

@@ -12,16 +12,14 @@ import pytest
 from hscida import DataAccessConfig, config_from_env, DataAccess, to_polars
 
 def test_config_from_env_parses_values(monkeypatch):
-    monkeypatch.setenv("GLOB_PATTERN", "glob('{projroot}/{dataset}/*.csv')")
+    monkeypatch.setenv("PATH_QUERY", "glob('{projroot}/{dataset}/*.csv')")
     monkeypatch.setenv("INIT_SQL", "SELECT 1")
-    monkeypatch.setenv("DUCKDB_CONFIG", "threads=1,enable_fsst_vectors=true")
     monkeypatch.setenv("PROJROOT", "/tmp/project")
 
     config = config_from_env()
 
-    assert config.glob_pattern == "glob('{projroot}/{dataset}/*.csv')"
+    assert config.path_query == "glob('{projroot}/{dataset}/*.csv')"
     assert config.init_sql == "SELECT 1"
-    assert config.duckdb_config == {"threads": "1", "enable_fsst_vectors": "true"}
     assert config.projroot == "/tmp/project"
 
 
@@ -33,24 +31,24 @@ def test_config_from_env_reads_dotenv_file(tmp_path: Path, monkeypatch):
         "dotenv_values",
         lambda path=None: original_dotenv_values(path or str(tmp_path / ".env")),
     )
-    monkeypatch.delenv("GLOB_PATTERN", raising=False)
+    monkeypatch.delenv("PATH_QUERY", raising=False)
     monkeypatch.delenv("INIT_SQL", raising=False)
-    monkeypatch.delenv("DUCKDB_CONFIG", raising=False)
     monkeypatch.delenv("PROJROOT", raising=False)
+    monkeypatch.delenv("VIEW_DEFINITION_QUERY", raising=False)
 
     (tmp_path / ".env").write_text(
-        "GLOB_PATTERN=glob('{projroot}/{dataset}/*.csv')\n"
+        "PATH_QUERY=FROM glob('{projroot}/{dataset}/*.csv')\n"
         "INIT_SQL=SELECT 42\n"
-        "DUCKDB_CONFIG=threads=2\n"
+        "VIEW_DEFINITION_QUERY=CREATE{or_replace} VIEW{if_not_exists} {dataset} AS SELECT 42;\n"
         "PROJROOT=/tmp/from-dotenv\n",
         encoding="utf-8",
     )
 
     config = config_from_env()
 
-    assert config.glob_pattern == "glob('{projroot}/{dataset}/*.csv')"
+    assert config.path_query == "FROM glob('{projroot}/{dataset}/*.csv')"
     assert config.init_sql == "SELECT 42"
-    assert config.duckdb_config == {"threads": "2"}
+    assert config.view_definition_query == "CREATE{or_replace} VIEW{if_not_exists} {dataset} AS SELECT 42;"
     assert config.projroot == "/tmp/from-dotenv"
 
 
@@ -62,29 +60,29 @@ def test_config_from_env_reads_dotenv_secret_and_overrides_env(tmp_path: Path, m
         "dotenv_values",
         lambda path=None: original_dotenv_values(path or str(tmp_path / ".env")),
     )
-    monkeypatch.delenv("GLOB_PATTERN", raising=False)
+    monkeypatch.delenv("PATH_QUERY", raising=False)
     monkeypatch.delenv("INIT_SQL", raising=False)
-    monkeypatch.delenv("DUCKDB_CONFIG", raising=False)
     monkeypatch.delenv("PROJROOT", raising=False)
+    monkeypatch.delenv("VIEW_DEFINITION_QUERY", raising=False)
 
     (tmp_path / ".env").write_text(
-        "GLOB_PATTERN=glob('{projroot}/{dataset}/*.csv')\n"
+        "PATH_QUERY=glob('{projroot}/{dataset}/*.csv')\n"
         "INIT_SQL=SELECT 1\n",
         encoding="utf-8",
     )
     (tmp_path / ".env.secret").write_text(
-        "GLOB_PATTERN=glob('{projroot}/{dataset}/*.parquet')\n"
+        "PATH_QUERY=FROM glob('{projroot}/{dataset}/*.parquet')\n"
         "INIT_SQL=SELECT 7\n"
-        "DUCKDB_CONFIG=threads=4\n"
+        "VIEW_DEFINITION_QUERY=CREATE{or_replace} VIEW{if_not_exists} {dataset} AS SELECT 42;\n"
         "PROJROOT=/tmp/from-secret\n",
         encoding="utf-8",
     )
 
     config = config_from_env()
 
-    assert config.glob_pattern == "glob('{projroot}/{dataset}/*.parquet')"
+    assert config.path_query == "FROM glob('{projroot}/{dataset}/*.parquet')"
     assert config.init_sql == "SELECT 7"
-    assert config.duckdb_config == {"threads": "4"}
+    assert config.view_definition_query == "CREATE{or_replace} VIEW{if_not_exists} {dataset} AS SELECT 42;"
     assert config.projroot == "/tmp/from-secret"
 
 
@@ -96,16 +94,16 @@ def test_config_from_env_works_without_dotenv_files(tmp_path: Path, monkeypatch)
         "dotenv_values",
         lambda path=None: original_dotenv_values(path or str(tmp_path / ".env")),
     )
-    monkeypatch.delenv("GLOB_PATTERN", raising=False)
+    monkeypatch.delenv("PATH_QUERY", raising=False)
     monkeypatch.delenv("INIT_SQL", raising=False)
-    monkeypatch.delenv("DUCKDB_CONFIG", raising=False)
     monkeypatch.delenv("PROJROOT", raising=False)
+    monkeypatch.delenv("VIEW_DEFINITION_QUERY", raising=False)
 
     config = config_from_env()
 
-    assert config.glob_pattern == ""
+    assert config.path_query == ""
     assert config.init_sql == ""
-    assert config.duckdb_config == hs._DEFAULT_DUCKDB_CONFIG
+    assert config.view_definition_query == "CREATE{or_replace} VIEW{if_not_exists} {dataset} AS FROM {source};"
     assert config.projroot == hs._PROJROOT
 
 
@@ -146,7 +144,7 @@ def test_data_access_loads_csv_as_duckdb_dataframe(tmp_path: Path):
     pl.DataFrame({"x": [1, 2], "y": ["a", "b"]}).write_csv(dataset_path)
 
     cfg = DataAccessConfig(
-        glob_pattern="glob('{projroot}/{dataset}.csv')",
+        path_query="FROM glob('{projroot}/{dataset}.csv')",
         init_sql="SELECT 1",
         projroot=str(tmp_path),
     )
@@ -166,7 +164,7 @@ def test_data_access_loads_multiple_parquet_paths_with_extension_reader(tmp_path
     pl.DataFrame({"x": [2], "y": ["b"]}).write_parquet(second_path)
 
     cfg = DataAccessConfig(
-        glob_pattern="",
+        path_query="",
         init_sql="SELECT 1",
         projroot=str(tmp_path),
     )
@@ -184,7 +182,7 @@ def test_data_access_loads_csv_as_spark_dataframe(tmp_path: Path):
     pl.DataFrame({"x": [1, 2], "y": ["a", "b"]}).write_csv(dataset_path)
 
     cfg = DataAccessConfig(
-        glob_pattern="glob('{projroot}/{dataset}.csv')",
+        path_query="FROM glob('{projroot}/{dataset}.csv')",
         init_sql="SELECT 1",
         projroot=str(tmp_path),
     )
@@ -203,7 +201,7 @@ def test_data_access_loads_csv_as_narwhals_dataframe(tmp_path: Path, accessor: s
     pl.DataFrame({"x": [1, 2], "y": ["a", "b"]}).write_csv(dataset_path)
 
     cfg = DataAccessConfig(
-        glob_pattern="glob('{projroot}/{dataset}.csv')",
+        path_query="FROM glob('{projroot}/{dataset}.csv')",
         init_sql="SELECT 1",
         projroot=str(tmp_path),
     )
@@ -222,7 +220,7 @@ def test_data_access_caches_relation(tmp_path: Path, accessor: str):
     pl.DataFrame({"v": [10]}).write_csv(dataset_path)
 
     cfg = DataAccessConfig(
-        glob_pattern="glob('{projroot}/{dataset}.csv')",
+        path_query="FROM glob('{projroot}/{dataset}.csv')",
         init_sql="SELECT 1",
         projroot=str(tmp_path),
     )
@@ -244,7 +242,7 @@ def test_data_access_caches_relation(tmp_path: Path, accessor: str):
 )
 def test_data_access_from_sql_generators_return_expected_data(tmp_path: Path, accessor: str):
     cfg = DataAccessConfig(
-        glob_pattern="glob('{projroot}/{dataset}.csv')",
+        path_query="glob('{projroot}/{dataset}.csv')",
         init_sql="SELECT 1",
         projroot=str(tmp_path),
     )
@@ -260,7 +258,7 @@ def test_data_access_from_sql_generators_return_expected_data(tmp_path: Path, ac
 
 def test_data_access_from_sql_generators_match_across_backends(tmp_path: Path):
     cfg = DataAccessConfig(
-        glob_pattern="glob('{projroot}/{dataset}.csv')",
+        path_query="FROM glob('{projroot}/{dataset}.csv')",
         init_sql="SELECT 1",
         projroot=str(tmp_path),
     )
@@ -283,7 +281,7 @@ def test_equality(tmp_path: Path):
     pl.DataFrame({"x": [1, 2], "y": ["a", "b"]}).write_csv(dataset_path)
 
     cfg = DataAccessConfig(
-        glob_pattern="glob('{projroot}/{dataset}.csv')",
+        path_query="FROM glob('{projroot}/{dataset}.csv')",
         init_sql="SELECT 1",
         projroot=str(tmp_path),
     )
@@ -295,7 +293,7 @@ def test_conversions(tmp_path: Path):
     pl.DataFrame({"x": [1, 2], "y": ["a", "b"]}).write_csv(dataset_path)
 
     cfg = DataAccessConfig(
-        glob_pattern="glob('{projroot}/{dataset}.csv')",
+        path_query="FROM glob('{projroot}/{dataset}.csv')",
         init_sql="SELECT 1",
         projroot=str(tmp_path),
     )

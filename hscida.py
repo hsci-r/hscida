@@ -4,7 +4,6 @@ from hereutil import here
 import narwhals as nw
 import duckdb
 from duckdb import DuckDBPyRelation
-from sqlframe import activate_context
 from sqlframe.duckdb import DuckDBDataFrame, DuckDBSession
 from sqlframe.duckdb import functions as F
 import os
@@ -70,12 +69,26 @@ def to_spark(lnf: DuckDBackedBDataFrameLike, session: DuckDBSession | None = Non
 s = to_spark
 
 def to_polars(lnf: DuckDBackedBDataFrameLike) -> pl.DataFrame:
-    return to_duckdb(lnf).pl()
+    if isinstance(lnf, DuckDBPyRelation):
+        return lnf.pl()
+    elif isinstance(lnf, DuckDBDataFrame):
+        return cast(pl.DataFrame, pl.from_arrow(lnf.toArrow()))
+    elif lnf.implementation.is_duckdb():
+        return cast(DuckDBPyRelation, lnf.to_native()).pl()
+    else:
+        return cast(pl.DataFrame, pl.from_arrow(cast(DuckDBDataFrame, lnf.to_native()).toArrow()))
 
 p = to_polars
 
 def to_pandas(lnf: DuckDBackedBDataFrameLike):
-    return to_duckdb(lnf).df()
+    if isinstance(lnf, DuckDBPyRelation):
+        return lnf.df()
+    elif isinstance(lnf, DuckDBDataFrame):
+        return lnf.toArrow().to_pandas(split_blocks=True, self_destruct=True)
+    elif lnf.implementation.is_duckdb():
+        return cast(DuckDBPyRelation, lnf.to_native()).df()
+    else:
+        return cast(DuckDBDataFrame, lnf.to_native()).toArrow().to_pandas(split_blocks=True, self_destruct=True)
 
 @overload
 def to_sql(lnf: DuckDBPyRelation|nw.LazyFrame[DuckDBPyRelation], optimize: bool = False, pretty: bool = False) -> str: ...
@@ -103,14 +116,13 @@ def to_sql(lnf: DuckDBackedBDataFrameLike, optimize: bool = False, pretty: bool 
 
 q = to_sql
 
-_DEFAULT_DUCKDB_CONFIG = dict(parquet_metadata_cache="true", preserve_insertion_order="false", enable_fsst_vectors="true")
 _PROJROOT = str(here())
 
 @dataclass
 class DataAccessConfig:
-    glob_pattern: str
-    init_sql: str
-    duckdb_config: dict[str, Any] = field(default_factory=lambda: _DEFAULT_DUCKDB_CONFIG)
+    init_sql: str = ""
+    path_query: str = ""
+    view_definition_query: str = "CREATE{or_replace} VIEW{if_not_exists} {dataset} AS FROM {source};"
     projroot: str = _PROJROOT
 
 def config_from_env() -> DataAccessConfig:
@@ -123,9 +135,9 @@ def config_from_env() -> DataAccessConfig:
     for k in sorted(k for k in c.keys() if k.startswith("INIT_SQL")):
         init_sql += c[k]
     return DataAccessConfig(
-        glob_pattern=c.get('GLOB_PATTERN', ''),
         init_sql=init_sql,
-        duckdb_config={k: v for k, v in [pair.split('=') for pair in c['DUCKDB_CONFIG'].split(',')] } if 'DUCKDB_CONFIG' in c else _DEFAULT_DUCKDB_CONFIG,
+        path_query=c.get('PATH_QUERY', ""),
+        view_definition_query=c.get('VIEW_DEFINITION_QUERY', "CREATE{or_replace} VIEW{if_not_exists} {dataset} AS FROM {source};"),
         projroot=c.get('PROJROOT', _PROJROOT)
     )
 
@@ -133,7 +145,7 @@ class DataAccess:
 
     def __init__(self, config: DataAccessConfig = config_from_env()) -> None:
         self.config = config
-        self.con = duckdb.connect(config=config.duckdb_config)
+        self.con = duckdb.connect()
         self.con.sql(config.init_sql)
         self.session = DuckDBSession(conn=self.con)
         self.session.input_dialect = Dialect.get_or_raise("duckdb")
@@ -143,11 +155,11 @@ class DataAccess:
     def ensure_dataset(self, dataset: str, *paths: str, replace: bool = False, debug: bool = False) -> None:
         if dataset not in self.datasets or replace:
             if not paths:
-                paths = tuple(path[0] for path in self.con.sql("FROM "+self.config.glob_pattern.format(dataset=dataset,projroot=self.config.projroot)).fetchall())
+                paths = tuple(path[0] for path in self.con.sql(self.config.path_query.format(dataset=dataset,projroot=self.config.projroot)).fetchall())
             if debug:
                 print(f"DEBUG: Found paths for dataset {dataset}: {paths}")
             if not paths:
-                print(f"No files found for dataset {dataset} in {self.config.glob_pattern.format(dataset=dataset,projroot=self.config.projroot)}")
+                print(f"No files found for dataset {dataset} in {self.config.path_query.format(dataset=dataset,projroot=self.config.projroot)}")
                 self.datasets[dataset] = cast(tuple[nw.LazyFrame[DuckDBPyRelation], nw.LazyFrame[DuckDBDataFrame]], (None, None))
                 return
             if len(paths) == 1:
@@ -156,7 +168,7 @@ class DataAccess:
                 reader = "read_csv" if paths[0].endswith((".tsv", ".tsv.gz", ".csv.gz")) else f"read_{paths[0].rsplit('.', 1)[-1]}"
                 paths_sql = "', '".join(paths)
                 source = f"{reader}(['{paths_sql}'], hive_partitioning=true)"
-            self.con.sql(f"CREATE {('OR REPLACE' if replace else '')} VIEW {'IF NOT EXISTS' if not replace else ''} {dataset} AS FROM {source};")
+            self.con.sql(self.config.view_definition_query.format(or_replace=(' OR REPLACE' if replace else ''), if_not_exists=(' IF NOT EXISTS' if not replace else ''), dataset=dataset, source=source))
             self.datasets[dataset] = (nw.from_native(self.con.sql(f'FROM {dataset}')), nw.from_native(self.session.table(dataset)))
 
     def narwhals_duckdb_dataframe(self, dataset: str, *paths: str,replace: bool = False, debug: bool = False) -> nw.LazyFrame[DuckDBPyRelation]:
