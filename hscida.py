@@ -116,6 +116,23 @@ def to_sql(lnf: DuckDBackedBDataFrameLike, optimize: bool = False, pretty: bool 
 
 q = to_sql
 
+@overload
+def to_table(lnf: DuckDBPyRelation|nw.LazyFrame[DuckDBPyRelation], name: str, con: duckdb.DuckDBPyConnection, temporary: bool = False, replace: bool = False) -> DuckDBPyRelation: ...
+
+@overload
+def to_table(lnf: DuckDBDataFrame|nw.LazyFrame[DuckDBDataFrame], name: str, con: DuckDBSession, temporary: bool = False, replace: bool = False) -> DuckDBDataFrame: ...
+
+def to_table(lnf: DuckDBackedBDataFrameLike, name: str, con: duckdb.DuckDBPyConnection | DuckDBSession, temporary: bool = False, replace: bool = False) -> DuckDBackedBDataFrameLike:
+    sql = f"CREATE{" OR REPLACE" if replace else ''}{" TEMPORARY" if temporary else ''} TABLE{" IF NOT EXISTS" if not replace else ''} {name} AS {to_sql(lnf)}"
+    if isinstance(lnf, DuckDBPyRelation) or (isinstance(lnf, nw.LazyFrame) and lnf.implementation.is_duckdb()):
+        con.sql(sql)
+        return con.table(name)
+    else:
+        cast(DuckDBSession, con)._execute(sql)
+        return con.table(name)
+
+t = to_table
+
 _PROJROOT = str(here())
 
 @dataclass
@@ -245,4 +262,12 @@ class DataAccess:
 
     q = to_sql
 
-__all__ = [ "DataAccess", "nw", "to_narwhals", "n", "to_duckdb", "d", "to_spark", "F", "s", "to_polars", "p", "to_pandas", "to_sql", "q", "DuckDBDataFrame", "DuckDBSession", "DuckDBPyRelation", "DuckDBackedBDataFrameLike", "pl" ]
+    def to_table(self, lnf: DuckDBackedBDataFrameLike, name: str, temporary: bool = False, replace: bool = False) -> DuckDBackedBDataFrameLike:
+        if isinstance(lnf, DuckDBPyRelation) or (isinstance(lnf, nw.LazyFrame) and lnf.implementation.is_duckdb()):
+            return to_table(cast(DuckDBPyRelation|nw.LazyFrame[DuckDBPyRelation], lnf), name, con=self.con, temporary=temporary, replace=replace)
+        else:
+            return to_table(cast(DuckDBDataFrame|nw.LazyFrame[DuckDBDataFrame], lnf), name, con=self.session, temporary=temporary, replace=replace)
+    
+    t = to_table
+
+__all__ = [ "DataAccess", "nw", "to_narwhals", "n", "to_duckdb", "d", "to_spark", "F", "s", "to_polars", "p", "to_pandas", "to_sql", "q", "to_table", "t", "DuckDBDataFrame", "DuckDBSession", "DuckDBPyRelation", "DuckDBackedBDataFrameLike", "pl" ]

@@ -11,6 +11,7 @@ import pytest
 
 from hscida import DataAccessConfig, config_from_env, DataAccess, to_polars
 
+
 def test_config_from_env_parses_values(monkeypatch):
     monkeypatch.setenv("PATH_QUERY", "glob('{projroot}/{dataset}/*.csv')")
     monkeypatch.setenv("INIT_SQL", "SELECT 1")
@@ -137,6 +138,91 @@ def test_config_from_env_builds_init_sql_from_env_var_names(monkeypatch):
     config = config_from_env()
 
     assert config.init_sql == "m;z;a;"
+
+
+@pytest.mark.parametrize(
+    ("source_type", "expected_type"),
+    [
+        ("duckdb_relation", DuckDBPyRelation),
+        ("narwhals_duckdb", DuckDBPyRelation),
+        ("spark_dataframe", DuckDBDataFrame),
+        ("narwhals_spark", DuckDBDataFrame),
+    ],
+)
+def test_to_table_creates_table_from_supported_inputs(tmp_path: Path, source_type: str, expected_type: type):
+    cfg = DataAccessConfig(
+        path_query="",
+        init_sql="SELECT 1",
+        projroot=str(tmp_path),
+    )
+    source_sql = "SELECT * FROM (VALUES (2, 'b'), (1, 'a')) AS t(x, y)"
+
+    with DataAccess(cfg) as da:
+        if source_type == "duckdb_relation":
+            source = da.duckdb_dataframe_from_sql(source_sql)
+        elif source_type == "narwhals_duckdb":
+            source = da.narwhals_duckdb_dataframe_from_sql(source_sql)
+        elif source_type == "spark_dataframe":
+            source = da.spark_dataframe_from_sql(source_sql)
+        else:
+            source = da.narwhals_spark_dataframe_from_sql(source_sql)
+
+        result = da.to_table(source, f"created_{source_type}")
+
+        assert isinstance(result, expected_type)
+        assert da.to_polars(result).sort("x").to_dict(as_series=False) == {
+            "x": [1, 2],
+            "y": ["a", "b"],
+        }
+        created = da.duckdb_dataframe_from_sql(f"FROM created_{source_type} ORDER BY x")
+        assert da.to_polars(created).to_dict(as_series=False) == {
+            "x": [1, 2],
+            "y": ["a", "b"],
+        }
+
+
+def test_to_table_keeps_existing_table_unless_replace_is_true(tmp_path: Path):
+    cfg = DataAccessConfig(
+        path_query="",
+        init_sql="SELECT 1",
+        projroot=str(tmp_path),
+    )
+
+    with DataAccess(cfg) as da:
+        da.to_table(da.duckdb_dataframe_from_sql("SELECT 1 AS x"), "replace_target")
+        da.to_table(da.duckdb_dataframe_from_sql("SELECT 2 AS x"), "replace_target")
+
+        assert da.to_polars(da.duckdb_dataframe_from_sql("FROM replace_target")).to_dict(as_series=False) == {"x": [1]}
+
+        result = da.to_table(da.duckdb_dataframe_from_sql("SELECT 2 AS x"), "replace_target", replace=True)
+
+        assert isinstance(result, DuckDBPyRelation)
+        assert da.to_polars(result).to_dict(as_series=False) == {"x": [2]}
+        assert da.to_polars(da.duckdb_dataframe_from_sql("FROM replace_target")).to_dict(as_series=False) == {"x": [2]}
+
+
+def test_to_table_can_create_temporary_table(tmp_path: Path):
+    cfg = DataAccessConfig(
+        path_query="",
+        init_sql="SELECT 1",
+        projroot=str(tmp_path),
+    )
+
+    with DataAccess(cfg) as da:
+        result = da.to_table(
+            da.duckdb_dataframe_from_sql("SELECT 1 AS x"),
+            "temporary_target",
+            temporary=True,
+        )
+
+        assert da.to_polars(result).to_dict(as_series=False) == {"x": [1]}
+        assert da.to_polars(da.duckdb_dataframe_from_sql("FROM temporary_target")).to_dict(as_series=False) == {"x": [1]}
+
+        metadata = da.duckdb_dataframe_from_sql(
+            "SELECT table_type FROM information_schema.tables "
+            "WHERE table_name = 'temporary_target'"
+        )
+        assert metadata.fetchall() == [("LOCAL TEMPORARY",)]
 
 
 def test_data_access_loads_csv_as_duckdb_dataframe(tmp_path: Path):
