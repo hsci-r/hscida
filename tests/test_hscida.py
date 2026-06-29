@@ -3,6 +3,7 @@ import os
 
 from duckdb import DuckDBPyRelation
 import narwhals
+import pandas as pd
 from sqlframe.duckdb import DuckDBDataFrame
 
 import hscida as hs
@@ -144,9 +145,9 @@ def test_config_from_env_builds_init_sql_from_env_var_names(monkeypatch):
     ("source_type", "expected_type"),
     [
         ("duckdb_relation", DuckDBPyRelation),
-        ("narwhals_duckdb", DuckDBPyRelation),
+        ("narwhals_duckdb", narwhals.LazyFrame),
         ("spark_dataframe", DuckDBDataFrame),
-        ("narwhals_spark", DuckDBDataFrame),
+        ("narwhals_spark", narwhals.LazyFrame),
     ],
 )
 def test_to_table_creates_table_from_supported_inputs(tmp_path: Path, source_type: str, expected_type: type):
@@ -167,7 +168,7 @@ def test_to_table_creates_table_from_supported_inputs(tmp_path: Path, source_typ
         else:
             source = da.narwhals_spark_dataframe_from_sql(source_sql)
 
-        result = da.to_table(source, f"created_{source_type}")
+        result = da.to_table(f"created_{source_type}", source)
 
         assert isinstance(result, expected_type)
         assert da.to_polars(result).sort("x").to_dict(as_series=False) == {
@@ -189,12 +190,12 @@ def test_to_table_keeps_existing_table_unless_replace_is_true(tmp_path: Path):
     )
 
     with DataAccess(cfg) as da:
-        da.to_table(da.duckdb_dataframe_from_sql("SELECT 1 AS x"), "replace_target")
-        da.to_table(da.duckdb_dataframe_from_sql("SELECT 2 AS x"), "replace_target")
+        da.to_table("replace_target", da.duckdb_dataframe_from_sql("SELECT 1 AS x"))
+        da.to_table("replace_target", da.duckdb_dataframe_from_sql("SELECT 2 AS x"))
 
         assert da.to_polars(da.duckdb_dataframe_from_sql("FROM replace_target")).to_dict(as_series=False) == {"x": [1]}
 
-        result = da.to_table(da.duckdb_dataframe_from_sql("SELECT 2 AS x"), "replace_target", replace=True)
+        result = da.to_table("replace_target", da.duckdb_dataframe_from_sql("SELECT 2 AS x"), replace=True)
 
         assert isinstance(result, DuckDBPyRelation)
         assert da.to_polars(result).to_dict(as_series=False) == {"x": [2]}
@@ -210,8 +211,8 @@ def test_to_table_can_create_temporary_table(tmp_path: Path):
 
     with DataAccess(cfg) as da:
         result = da.to_table(
-            da.duckdb_dataframe_from_sql("SELECT 1 AS x"),
             "temporary_target",
+            da.duckdb_dataframe_from_sql("SELECT 1 AS x"),
             temporary=True,
         )
 
@@ -317,6 +318,98 @@ def test_data_access_caches_relation(tmp_path: Path, accessor: str):
     assert first is second
 
 
+def _conversion_source_data() -> dict[str, list[object]]:
+    return {"x": [2, 1, 0], "y": ["b", "a", "drop"]}
+
+
+EXPECTED_CONVERSION_DATA = {"x": [1, 2], "y": ["a", "b"]}
+CONVERSION_METHODS = ("to_duckdb", "to_spark", "to_polars", "to_pandas", "to_narwhals")
+CONVERSION_CHAIN_DEPTH = len(CONVERSION_METHODS)
+CONVERSION_RESULT_TYPES = {
+    "to_duckdb": DuckDBPyRelation,
+    "to_spark": DuckDBDataFrame,
+    "to_polars": pl.DataFrame,
+    "to_pandas": pd.DataFrame,
+    "to_narwhals": narwhals.LazyFrame,
+}
+
+
+def _conversion_sources(da: DataAccess):
+    source_sql = "SELECT * FROM (VALUES (2, 'b'), (1, 'a')) AS t(x, y)"
+    polars_df = pl.DataFrame(_conversion_source_data())
+    pandas_df = pd.DataFrame(_conversion_source_data())
+
+    return [
+        ("duckdb_relation", da.duckdb_dataframe_from_sql(source_sql)),
+        ("spark_dataframe", da.spark_dataframe_from_sql(source_sql)),
+        ("narwhals_duckdb", da.narwhals_duckdb_dataframe_from_sql(source_sql)),
+        ("narwhals_spark", da.narwhals_spark_dataframe_from_sql(source_sql)),
+        ("polars_dataframe", polars_df),
+        ("polars_lazyframe", polars_df.lazy()),
+        ("pandas_dataframe", pandas_df),
+        ("narwhals_polars_dataframe", narwhals.from_native(polars_df)),
+        ("narwhals_polars_lazyframe", narwhals.from_native(polars_df.lazy())),
+        ("narwhals_pandas_dataframe", narwhals.from_native(pandas_df)),
+    ]
+
+
+def _as_polars(da: DataAccess, value) -> pl.DataFrame:
+    if isinstance(value, pl.DataFrame):
+        return value
+    if isinstance(value, pd.DataFrame):
+        return pl.from_pandas(value)
+    return da.to_polars(value)
+
+
+def _assert_conversion_data(da: DataAccess, value, context: str):
+    actual = _as_polars(da, value).sort("x").to_dict(as_series=False)
+    assert actual == EXPECTED_CONVERSION_DATA, context
+
+
+def _query_conversion_source(value):
+    if isinstance(value, DuckDBPyRelation):
+        return value.filter("x > 0").project("x, y")
+    if isinstance(value, DuckDBDataFrame):
+        return value.filter(value["x"] > 0).select("x", "y")
+    if isinstance(value, narwhals.LazyFrame | narwhals.DataFrame):
+        return value.filter(narwhals.col("x") > 0).select("x", "y")
+    if isinstance(value, pl.LazyFrame):
+        return value.filter(pl.col("x") > 0).select("x", "y")
+    if isinstance(value, pl.DataFrame):
+        return value.filter(pl.col("x") > 0).select("x", "y")
+    if isinstance(value, pd.DataFrame):
+        return value.loc[value["x"] > 0, ["x", "y"]]
+    raise TypeError(f"Unsupported conversion source type: {type(value)}")
+
+
+def _conversion_methods_for(value) -> tuple[str, ...]:
+    if isinstance(value, (DuckDBPyRelation, DuckDBDataFrame)):
+        return CONVERSION_METHODS
+    if (
+        isinstance(value, narwhals.LazyFrame)
+        and (value.implementation.is_duckdb() or value.implementation.is_sqlframe())
+    ):
+        return CONVERSION_METHODS
+    return tuple(converter for converter in CONVERSION_METHODS if converter != "to_narwhals")
+
+
+def _convert_and_assert(da: DataAccess, converter: str, value, context: str):
+    result = getattr(da, converter)(value)
+    assert isinstance(result, CONVERSION_RESULT_TYPES[converter]), context
+    _assert_conversion_data(da, result, context)
+    return result
+
+
+def _assert_conversion_chains(da: DataAccess, value, context: str, depth: int):
+    if depth == 0:
+        return
+
+    for converter in _conversion_methods_for(value):
+        next_context = f"{context}->{converter}"
+        converted = _convert_and_assert(da, converter, value, next_context)
+        _assert_conversion_chains(da, converted, next_context, depth - 1)
+
+
 @pytest.mark.parametrize(
     "accessor",
     [
@@ -375,30 +468,14 @@ def test_equality(tmp_path: Path):
         assert to_polars(da.duckdb_dataframe("sample")).equals(to_polars(da.narwhals_duckdb_dataframe("sample")))
 
 def test_conversions(tmp_path: Path):
-    dataset_path = tmp_path / "sample.csv"
-    pl.DataFrame({"x": [1, 2], "y": ["a", "b"]}).write_csv(dataset_path)
-
     cfg = DataAccessConfig(
-        path_query="FROM glob('{projroot}/{dataset}.csv')",
+        path_query="",
         init_sql="SELECT 1",
         projroot=str(tmp_path),
     )
+
     with DataAccess(cfg) as da:
-        for accessor in ["duckdb_dataframe", "spark_dataframe", "narwhals_duckdb_dataframe", "narwhals_spark_dataframe"]:
-            df = getattr(da, accessor)("sample")
-            if isinstance(df, narwhals.LazyFrame):
-                df = df.filter(narwhals.col("x") >=    0).filter(narwhals.col("y") != "b")
-            elif isinstance(df, DuckDBDataFrame):
-                df = df.filter(df["x"] >= 0).filter(df["y"] != "b")
-            elif isinstance(df, DuckDBPyRelation):
-                df = df.filter('x >= 0').filter("y != 'b'")
-            assert to_polars(df).equals(pl.DataFrame({"x": [1], "y": ["a"]}))
-            for converter1 in ["to_duckdb", "to_spark", "to_narwhals"]:
-                for converter2 in ["to_duckdb", "to_spark", "to_narwhals"]:
-                    for converter3 in ["to_duckdb", "to_spark", "to_narwhals"]:
-                        converted1 = getattr(da, converter1)(df)
-                        converted2 = getattr(da, converter2)(converted1)
-                        converted3 = getattr(da, converter3)(converted2)
-                        assert to_polars(df).equals(to_polars(converted1))
-                        assert to_polars(df).equals(to_polars(converted2))
-                        assert to_polars(df).equals(to_polars(converted3))
+        for source_name, source in _conversion_sources(da):
+            queried = _query_conversion_source(source)
+            _assert_conversion_data(da, queried, source_name)
+            _assert_conversion_chains(da, queried, source_name, CONVERSION_CHAIN_DEPTH)

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "hscida"
-version = "0.5.1"
+version = "0.5.5"
 description = "HSCI data access provider"
 readme = "README.md"
 requires-python = ">=3.12"
