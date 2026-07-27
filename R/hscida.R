@@ -74,15 +74,18 @@ data_access <- function(config = config_from_env()) {
     if (!exists(dataset, envir = datasets) || replace) {
       paths <- unlist(list(...), use.names = FALSE)
       if (length(paths) == 0)
-        paths <- dplyr::tbl(
+        paths <- DBI::dbGetQuery(
           con,
-          glue::glue_data(list(dataset = dataset, projroot = config$projroot), config$glob_pattern)
+          glue::glue_data(
+            list(dataset = dataset, projroot = config$projroot),
+            config$path_query
+          )
         ) |>
           dplyr::pull(file)
       if (debug)
         message(glue::glue("Registering dataset {dataset} with paths: {paths}"))
       if (length(paths) == 0) {
-        warning(glue::glue("No files found for dataset {dataset} in {config[['glob_pattern']]}"))
+        warning(glue::glue("No files found for dataset {dataset} in {config[['path_query']]}"))
         return(invisible(NULL))
       }
       register_files_as_view(dataset, paths, replace = replace)

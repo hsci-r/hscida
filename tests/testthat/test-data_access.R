@@ -138,6 +138,37 @@ test_that("data_access can register and query csv", {
   expect_true(all(c("x", "y") %in% names(out)))
 })
 
+test_that("data_access discovers files without explicit paths", {
+  project_root <- tempfile("data-root-")
+  dataset_dir <- file.path(project_root, "sample")
+  dir.create(dataset_dir, recursive = TRUE)
+  readr::write_csv(
+    tibble::tribble(
+      ~x, ~y,
+      1, "a",
+      2, "b"
+    ),
+    file.path(dataset_dir, "part.csv")
+  )
+
+  cfg <- list(
+    path_query = "FROM glob('{projroot}/{dataset}/*.csv')",
+    init_sql = "SELECT 1",
+    view_definition_query = "CREATE OR REPLACE VIEW {dataset} AS FROM {source}",
+    projroot = project_root
+  )
+
+  da <- data_access(cfg)
+  on.exit(DBI::dbDisconnect(da$con, shutdown = TRUE), add = TRUE)
+
+  out <- da$f("sample") |>
+    dplyr::arrange(x) |>
+    dplyr::collect()
+
+  expect_equal(out$x, c(1, 2))
+  expect_equal(out$y, c("a", "b"))
+})
+
 test_that("data_access can register and query multiple parquet paths", {
   first_path <- tempfile(fileext = ".parquet")
   second_path <- tempfile(fileext = ".parquet")
