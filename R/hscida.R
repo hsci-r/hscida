@@ -7,8 +7,9 @@ ignore_unused_imports <- function() {
 #' Loads values from the process environment (and optional `.env` file), then
 #' builds the configuration list consumed by the package data access helpers.
 #'
-#' @return A list containing `glob_pattern`, `init_sql`, `duckdb_config`, and
-#'   `projroot`.
+#' @return A list containing `path_query`, `list_datasets_query`, `init_sql`,
+#'   `view_definition_query`, and `projroot`.
+#' @importFrom rlang .data
 #' @keywords internal
 #' @noRd
 config_from_env <- function() {
@@ -16,12 +17,13 @@ config_from_env <- function() {
   try(dotenv::load_dot_env(here::here(".env.secret")), silent = TRUE)
   init_sql <- Sys.getenv() |>
     tibble::enframe() |>
-    dplyr::filter(name |> stringr::str_starts("INIT_SQL")) |>
-    dplyr::arrange(name) |>
-    dplyr::pull(value) |>
+    dplyr::filter(.data$name |> stringr::str_starts("INIT_SQL")) |>
+    dplyr::arrange(.data$name) |>
+    dplyr::pull(.data$value) |>
     stringr::str_c(collapse = "")
   list(
     path_query = Sys.getenv("PATH_QUERY"),
+    list_datasets_query = Sys.getenv("LIST_DATASETS_QUERY"),
     init_sql = init_sql,
     view_definition_query = Sys.getenv("VIEW_DEFINITION_QUERY", "CREATE{or_replace} VIEW{if_not_exists} {dataset} AS FROM {source};"),
     projroot = Sys.getenv("PROJROOT", here::here())
@@ -32,12 +34,14 @@ config_from_env <- function() {
 #'
 #' @param config A configuration list (by default from config_from_env()).
 #'
-#' @return A list with a DBI connection `con` and dataset accessor `f`.
+#' @return A list with a DBI connection `con`, dataset accessor `f`, and
+#'   dataset discovery function `list_datasets`.
 #' @export
 #'
 #' @examples
 #' cfg <- list(
 #'   path_query = "FROM glob('{projroot}/{dataset}/*.csv')",
+#'   list_datasets_query = "SELECT DISTINCT regexp_extract(file, '{projroot}/([^/]+)', 1) AS dataset FROM glob('{projroot}/*')",
 #'   init_sql = "SELECT 1",
 #'   view_definition_query = "CREATE{or_replace} VIEW{if_not_exists} {dataset} AS FROM {source};",
 #'   projroot = tempdir()
@@ -96,5 +100,17 @@ data_access <- function(config = config_from_env()) {
     }
     get(dataset, envir = datasets)
   }
-  list(con = con, f = f)
+  list_datasets <- function(debug = FALSE) {
+    if (identical(config$list_datasets_query, "")) {
+      warning("No LIST_DATASETS_QUERY configured; set the LIST_DATASETS_QUERY environment variable to enable dataset discovery.", call. = FALSE)
+      return(character(0))
+    }
+    query <- glue::glue_data(list(projroot = config$projroot), config$list_datasets_query)
+    if (debug)
+      message(glue::glue("Listing datasets with query: {query}"))
+    DBI::dbGetQuery(con, query)[[1]] |>
+      unique() |>
+      sort()
+  }
+  list(con = con, f = f, list_datasets = list_datasets)
 }

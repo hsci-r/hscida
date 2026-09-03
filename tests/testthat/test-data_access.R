@@ -1,7 +1,7 @@
 library(hscida)
 
 test_that("config_from_env reads values from .env", {
-  Sys.unsetenv(c("PATH_QUERY", "INIT_SQL", "PROJROOT"))
+  Sys.unsetenv(c("PATH_QUERY", "LIST_DATASETS_QUERY", "INIT_SQL", "PROJROOT"))
 
   tmp_root <- tempfile("dotenv-root-")
   dir.create(tmp_root)
@@ -13,6 +13,7 @@ test_that("config_from_env reads values from .env", {
 
   writeLines(c(
     "PATH_QUERY=FROM glob('{projroot}/{dataset}/*.csv')",
+    "LIST_DATASETS_QUERY=SELECT dataset FROM glob('{projroot}/*')",
     "INIT_SQL=SELECT 42",
     "PROJROOT=/tmp/from-dotenv"
   ), file.path(tmp_root, ".env"))
@@ -20,6 +21,7 @@ test_that("config_from_env reads values from .env", {
   cfg <- hscida:::config_from_env()
 
   expect_equal(cfg$path_query, "FROM glob('{projroot}/{dataset}/*.csv')")
+  expect_equal(cfg$list_datasets_query, "SELECT dataset FROM glob('{projroot}/*')")
   expect_equal(cfg$init_sql, "SELECT 42")
   expect_equal(cfg$projroot, "/tmp/from-dotenv")
 })
@@ -223,4 +225,41 @@ test_that("data_access caches datasets", {
   second <- da$f("cache")
 
   expect_identical(first, second)
+})
+
+test_that("list_datasets discovers datasets via glob when configured", {
+  project_root <- tempfile("data-root-")
+  dir.create(file.path(project_root, "alpha"), recursive = TRUE)
+  dir.create(file.path(project_root, "beta"), recursive = TRUE)
+  readr::write_csv(tibble::tibble(x = 1), file.path(project_root, "alpha", "part.csv"))
+  readr::write_csv(tibble::tibble(x = 1), file.path(project_root, "beta", "part.csv"))
+
+  cfg <- list(
+    path_query = "FROM glob('{projroot}/{dataset}/*.csv')",
+    list_datasets_query = "SELECT DISTINCT regexp_extract(file, '{projroot}/([^/]+)', 1) AS dataset FROM glob('{projroot}/*/*.csv')",
+    init_sql = "SELECT 1",
+    view_definition_query = "CREATE OR REPLACE VIEW {dataset} AS FROM {source}",
+    projroot = project_root
+  )
+
+  da <- data_access(cfg)
+  on.exit(DBI::dbDisconnect(da$con, shutdown = TRUE), add = TRUE)
+
+  expect_equal(da$list_datasets(), c("alpha", "beta"))
+})
+
+test_that("list_datasets warns and returns empty when not configured", {
+  cfg <- list(
+    path_query = "FROM glob('{projroot}/{dataset}/*.csv')",
+    list_datasets_query = "",
+    init_sql = "SELECT 1",
+    view_definition_query = "CREATE OR REPLACE VIEW {dataset} AS FROM {source}",
+    projroot = tempdir()
+  )
+
+  da <- data_access(cfg)
+  on.exit(DBI::dbDisconnect(da$con, shutdown = TRUE), add = TRUE)
+
+  expect_warning(result <- da$list_datasets(), "LIST_DATASETS_QUERY")
+  expect_equal(result, character(0))
 })

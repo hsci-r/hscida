@@ -15,12 +15,14 @@ from hscida import DataAccessConfig, config_from_env, DataAccess, to_polars
 
 def test_config_from_env_parses_values(monkeypatch):
     monkeypatch.setenv("PATH_QUERY", "glob('{projroot}/{dataset}/*.csv')")
+    monkeypatch.setenv("LIST_DATASETS_QUERY", "SELECT dataset FROM glob('{projroot}/*')")
     monkeypatch.setenv("INIT_SQL", "SELECT 1")
     monkeypatch.setenv("PROJROOT", "/tmp/project")
 
     config = config_from_env()
 
     assert config.path_query == "glob('{projroot}/{dataset}/*.csv')"
+    assert config.list_datasets_query == "SELECT dataset FROM glob('{projroot}/*')"
     assert config.init_sql == "SELECT 1"
     assert config.projroot == "/tmp/project"
 
@@ -316,6 +318,31 @@ def test_data_access_caches_relation(tmp_path: Path, accessor: str):
         second = getattr(da, accessor)("cache")
 
     assert first is second
+
+
+def test_list_datasets_discovers_datasets_via_glob(tmp_path: Path):
+    (tmp_path / "alpha").mkdir()
+    (tmp_path / "beta").mkdir()
+    (tmp_path / "alpha" / "part.csv").write_text("x\n1\n")
+    (tmp_path / "beta" / "part.csv").write_text("x\n1\n")
+
+    cfg = DataAccessConfig(
+        init_sql="SELECT 1",
+        list_datasets_query="SELECT DISTINCT regexp_extract(file, '{projroot}/([^/]+)', 1) AS dataset FROM glob('{projroot}/*/*.csv')",
+        projroot=str(tmp_path),
+    )
+    with DataAccess(cfg) as da:
+        assert da.list_datasets() == ["alpha", "beta"]
+        assert da.ld() == ["alpha", "beta"]
+
+
+def test_list_datasets_without_configured_query_returns_empty(tmp_path: Path):
+    cfg = DataAccessConfig(
+        init_sql="SELECT 1",
+        projroot=str(tmp_path),
+    )
+    with DataAccess(cfg) as da:
+        assert da.list_datasets() == []
 
 
 def _conversion_source_data() -> dict[str, list[object]]:

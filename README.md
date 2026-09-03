@@ -46,6 +46,16 @@ It may use `{projroot}` and `{dataset}` placeholders. For example:
 GLOB_PATTERN=glob('{projroot}/data/{dataset}/*.parquet')
 ```
 
+`LIST_DATASETS_QUERY` is an optional DuckDB query used to list the datasets
+available at the configured destination, using DuckDB's `glob()` capability. It
+may use the `{projroot}` placeholder. The query must return the dataset names
+as its first (and only expected) column. If it is unset, dataset listing is
+disabled. For example:
+
+```dotenv
+LIST_DATASETS_QUERY=SELECT DISTINCT regexp_extract(file, '{projroot}/([^/]+)', 1) AS dataset FROM glob('{projroot}/*')
+```
+
 `INIT_SQL`, plus any other variables whose names start with `INIT_SQL`, are
 concatenated in sorted key order and run when the DuckDB connection starts. This
 is useful for loading extensions, creating secrets, setting S3 endpoints, or
@@ -104,6 +114,14 @@ with DataAccess() as da:
     preview = rel.limit(10).pl()
 ```
 
+If `LIST_DATASETS_QUERY` is configured, you can discover which datasets are
+available before loading one:
+
+```python
+with DataAccess() as da:
+    available = da.list_datasets()  # or da.ld()
+```
+
 `DataAccess` can expose the same dataset through several lazy dataframe APIs:
 
 ```python
@@ -134,6 +152,7 @@ Short aliases are available for interactive work:
 - `da.n()` / `da.to_narwhals()`
 - `da.p()` / `da.to_polars()`
 - `da.q()` / `da.to_sql()`
+- `da.ld()` / `da.list_datasets()`
 
 ## R Usage
 
@@ -156,6 +175,13 @@ a `dplyr` table backed by DuckDB. You can pass explicit paths to bypass
 
 ```r
 tbl <- da$f("my_dataset", "data/my_dataset/part-000.parquet", replace = TRUE)
+```
+
+If `LIST_DATASETS_QUERY` is configured, you can discover which datasets are
+available before loading one:
+
+```r
+available <- da$list_datasets()
 ```
 
 ## Development

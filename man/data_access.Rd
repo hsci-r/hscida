@@ -10,14 +10,16 @@ data_access(config = config_from_env())
 \item{config}{A configuration list (by default from config_from_env()).}
 }
 \value{
-A list with a DBI connection \code{con} and dataset accessor \code{f}.
+A list with a DBI connection \code{con}, dataset accessor \code{f}, and
+dataset discovery function \code{list_datasets}.
 }
 \description{
 Create a data access object backed by DuckDB.
 }
 \examples{
 cfg <- list(
-  glob_pattern = "glob('{projroot}/{dataset}/*.csv')",
+  path_query = "glob('{projroot}/{dataset}/*.csv')",
+  list_datasets_query = "SELECT DISTINCT regexp_extract(file, '{projroot}/([^/]+)', 1) AS dataset FROM glob('{projroot}/*')",
   init_sql = "SELECT 1",
   duckdb_config = list(),
   projroot = tempdir()

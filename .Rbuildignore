@@ -1,6 +1,7 @@
 ^\.git$
 ^\.github$
 ^\.venv$
+^\.vscode$
 ^\.pytest_cache$
 ^\.history$
 ^\.lintr$

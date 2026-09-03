@@ -211,6 +211,7 @@ _PROJROOT = str(here())
 class DataAccessConfig:
     init_sql: str = ""
     path_query: str = ""
+    list_datasets_query: str = ""
     view_definition_query: str = "CREATE{or_replace} VIEW{if_not_exists} {dataset} AS FROM {source};"
     projroot: str = _PROJROOT
 
@@ -226,6 +227,7 @@ def config_from_env() -> DataAccessConfig:
     return DataAccessConfig(
         init_sql=init_sql,
         path_query=c.get('PATH_QUERY', ""),
+        list_datasets_query=c.get('LIST_DATASETS_QUERY', ""),
         view_definition_query=c.get('VIEW_DEFINITION_QUERY', "CREATE{or_replace} VIEW{if_not_exists} {dataset} AS FROM {source};"),
         projroot=c.get('PROJROOT', _PROJROOT)
     )
@@ -259,6 +261,17 @@ class DataAccess:
                 source = f"{reader}(['{paths_sql}'], hive_partitioning=true)"
             self.con.sql(self.config.view_definition_query.format(or_replace=(' OR REPLACE' if replace else ''), if_not_exists=(' IF NOT EXISTS' if not replace else ''), dataset=dataset, source=source))
             self.datasets[dataset] = (nw.from_native(self.con.sql(f'FROM {dataset}')), nw.from_native(self.session.table(dataset)))
+
+    def list_datasets(self, debug: bool = False) -> list[str]:
+        if not self.config.list_datasets_query:
+            print("No LIST_DATASETS_QUERY configured; set the LIST_DATASETS_QUERY environment variable to enable dataset discovery.")
+            return []
+        sql = self.config.list_datasets_query.format(projroot=self.config.projroot)
+        if debug:
+            print(f"DEBUG: Listing datasets with query: {sql}")
+        return sorted({row[0] for row in self.con.sql(sql).fetchall()})
+
+    ld = list_datasets
 
     def narwhals_duckdb_dataframe(self, dataset: str, *paths: str,replace: bool = False, debug: bool = False) -> nw.LazyFrame[DuckDBPyRelation]:
         self.ensure_dataset(dataset, *paths, replace=replace, debug=debug)
